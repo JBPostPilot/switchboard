@@ -94,6 +94,7 @@ export class ChatSession {
       prompt: this.queue as AsyncIterable<never>,
       options: {
         cwd: this.meta.cwd,
+        model: this.meta.preferredModel,
         permissionMode: 'default',
         includePartialMessages: false,
         // Behave like a normal `claude` session in this folder: load the
@@ -242,6 +243,15 @@ export class ChatSession {
       parent_tool_use_id: null
     })
     this.setStatus('working', 'Working…')
+  }
+
+  setPreferredModel(model?: string): void {
+    this.meta.preferredModel = model || undefined
+    // Applies live if the session is running; otherwise it's picked up when
+    // the session starts.
+    const q = this.q as { setModel?: (m?: string) => Promise<void> } | null
+    if (q?.setModel) void q.setModel(model || undefined).catch(() => {})
+    this.touch()
   }
 
   async interrupt(): Promise<void> {

@@ -51,9 +51,9 @@ npm run dist       # package a .dmg (electron-builder)
 - [ ] macOS notifications when a chat needs your reply; click to jump
 - [ ] Questions from Claude (AskUserQuestion) rendered as tappable option cards
 - [ ] Restore full history when resuming (parse the session JSONL transcript)
-- [ ] Markdown rendering in Claude's replies
 - [ ] Worktree-aware grouping for chats in the same repo
-- [ ] Model picker + permission-mode switch per chat (`setModel`, `setPermissionMode`)
+- [ ] Permission-mode switch per chat (`setPermissionMode`)
+- [ ] Configurable projects root (where "Create a new project" puts folders)
 
 ## License
 

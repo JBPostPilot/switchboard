@@ -1,7 +1,35 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import type { ChatMeta, ProjectInfo, ThreadItem } from '../../shared/types'
 
 const sb = window.switchboard
+
+const MODEL_CHOICES = [
+  { id: '', label: 'Default model' },
+  { id: 'opus', label: 'Opus — most capable' },
+  { id: 'sonnet', label: 'Sonnet — fast + smart' },
+  { id: 'haiku', label: 'Haiku — fastest' }
+]
+
+const HANDY_COMMANDS = [
+  { cmd: '/init', desc: 'Teach Claude this project — writes project notes it reads every chat' },
+  { cmd: '/compact', desc: 'Tidy a long chat so Claude stays sharp' },
+  { cmd: '/review', desc: 'Review a pull request' }
+]
+
+function Markdown({ text }: { text: string }): React.JSX.Element {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        a: (props) => <a {...props} target="_blank" rel="noreferrer" />
+      }}
+    >
+      {text}
+    </ReactMarkdown>
+  )
+}
 
 function shortPath(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, '~')
@@ -28,6 +56,8 @@ export default function App(): React.JSX.Element {
   const [rawMode, setRawMode] = useState(false)
   const [raw, setRaw] = useState<unknown[]>([])
   const [info, setInfo] = useState<ProjectInfo | null>(null)
+  const [draft, setDraft] = useState('')
+  const composerRef = useRef<HTMLInputElement>(null)
   const currentIdRef = useRef(currentId)
   currentIdRef.current = currentId
 
@@ -72,6 +102,7 @@ export default function App(): React.JSX.Element {
     setItems([])
     setRaw([])
     setRawMode(false)
+    setDraft('')
     void sb.getItems(currentId).then(setItems)
     void sb.getRaw(currentId).then(setRaw)
   }, [currentId])
@@ -131,12 +162,22 @@ export default function App(): React.JSX.Element {
             items={items}
             raw={raw}
             rawMode={rawMode}
+            draft={draft}
+            setDraft={setDraft}
+            composerRef={composerRef}
             onToggleRaw={() => setRawMode((v) => !v)}
             onSend={send}
             onDecide={decide}
             onInterrupt={() => void sb.interrupt(current.id)}
           />
-          <DetailsPanel chat={current} info={info} />
+          <DetailsPanel
+            chat={current}
+            info={info}
+            onUseCommand={(cmd) => {
+              setDraft(cmd + ' ')
+              composerRef.current?.focus()
+            }}
+          />
         </>
       ) : (
         <EmptyState onCreated={chatCreated} />
@@ -298,6 +339,9 @@ function ChatPane({
   items,
   raw,
   rawMode,
+  draft,
+  setDraft,
+  composerRef,
   onToggleRaw,
   onSend,
   onDecide,
@@ -307,12 +351,14 @@ function ChatPane({
   items: ThreadItem[]
   raw: unknown[]
   rawMode: boolean
+  draft: string
+  setDraft: (v: string) => void
+  composerRef: React.RefObject<HTMLInputElement | null>
   onToggleRaw: () => void
   onSend: (text: string) => void
   onDecide: (d: 'allow' | 'always' | 'deny') => void
   onInterrupt: () => void
 }): React.JSX.Element {
-  const [draft, setDraft] = useState('')
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -336,6 +382,18 @@ function ChatPane({
           <div className="chat-head-sub">{shortPath(chat.cwd)}</div>
         </div>
         <div className="head-actions no-drag">
+          <select
+            className="model-select"
+            title="Which Claude model this chat uses"
+            value={chat.preferredModel ?? ''}
+            onChange={(e) => void sb.setModel(chat.id, e.target.value || undefined)}
+          >
+            {MODEL_CHOICES.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.label}
+              </option>
+            ))}
+          </select>
           {chat.status === 'working' && (
             <button className="icon-btn" onClick={onInterrupt} title="Stop what Claude is doing">
               ◼ Stop
@@ -382,6 +440,7 @@ function ChatPane({
       <div className="composer">
         <div className="composer-inner">
           <input
+            ref={composerRef}
             value={draft}
             placeholder={items.length === 0 ? 'What would you like Claude to do?' : 'Reply to Claude…'}
             onChange={(e) => setDraft(e.target.value)}
@@ -416,7 +475,9 @@ function ThreadItemView({
       return (
         <div className="msg-claude">
           <span className="spark-dot">✳</span>
-          <div className="body">{item.text}</div>
+          <div className="body markdown">
+            <Markdown text={item.text} />
+          </div>
         </div>
       )
     case 'step':
@@ -470,7 +531,15 @@ function ThreadItemView({
   }
 }
 
-function DetailsPanel({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null }): React.JSX.Element {
+function DetailsPanel({
+  chat,
+  info,
+  onUseCommand
+}: {
+  chat: ChatMeta
+  info: ProjectInfo | null
+  onUseCommand: (cmd: string) => void
+}): React.JSX.Element {
   return (
     <aside className="details">
       <div className="d-section">
@@ -517,6 +586,17 @@ function DetailsPanel({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null
             No shortcuts yet — ask Claude to create one for anything you do often in this project.
           </p>
         )}
+      </div>
+      <div className="d-section">
+        <h3>Handy commands</h3>
+        <div className="cmd-list">
+          {HANDY_COMMANDS.map((c) => (
+            <button className="cmd" key={c.cmd} onClick={() => onUseCommand(c.cmd)}>
+              <span className="slash">{c.cmd}</span>
+              <span className="cmd-desc">{c.desc}</span>
+            </button>
+          ))}
+        </div>
       </div>
       <div className="d-section">
         <h3>Connected apps</h3>

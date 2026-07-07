@@ -1,7 +1,9 @@
 // Headless smoke test of the session core: one streaming-input session,
 // one user message, expect an assistant reply and a result message.
-// Run: node scripts/smoke.mjs
+// Run: node scripts/smoke.mjs [model]   e.g. node scripts/smoke.mjs haiku
 import { query } from '@anthropic-ai/claude-agent-sdk'
+
+const model = process.argv[2] || undefined
 
 const messages = (async function* () {
   yield {
@@ -21,6 +23,7 @@ for await (const msg of query({
   prompt: messages,
   options: {
     cwd: process.cwd(),
+    model,
     permissionMode: 'default',
     settingSources: [],
     maxTurns: 1

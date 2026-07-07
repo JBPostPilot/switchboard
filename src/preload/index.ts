@@ -12,6 +12,8 @@ const api = {
   respondPermission: (chatId: string, decision: PermissionDecision): Promise<void> =>
     ipcRenderer.invoke('chats:permission', chatId, decision),
   interrupt: (chatId: string): Promise<void> => ipcRenderer.invoke('chats:interrupt', chatId),
+  setModel: (chatId: string, model?: string): Promise<void> =>
+    ipcRenderer.invoke('chats:set-model', chatId, model),
   getItems: (chatId: string): Promise<ThreadItem[]> => ipcRenderer.invoke('chats:items', chatId),
   getRaw: (chatId: string): Promise<unknown[]> => ipcRenderer.invoke('chats:raw', chatId),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),

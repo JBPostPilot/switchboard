@@ -13,7 +13,9 @@
     "dist": "electron-vite build && electron-builder --mac"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.202"
+    "@anthropic-ai/claude-agent-sdk": "^0.3.202",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.0",

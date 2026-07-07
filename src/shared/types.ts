@@ -11,6 +11,7 @@ export interface ChatMeta {
   statusLine: string
   preview: string
   model?: string
+  preferredModel?: string
   costUsd?: number
   contextTokens?: number
   createdAt: number

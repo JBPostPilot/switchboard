@@ -82,6 +82,9 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // Links in rendered markdown open in the browser, never in-app.
+  win.webContents.on('will-navigate', (e) => e.preventDefault())
+
   if (process.env.ELECTRON_RENDERER_URL) {
     void win.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
@@ -125,6 +128,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:permission', (_e, chatId: string, decision: PermissionDecision) => {
     getSession(chatId)?.respondPermission(decision)
+  })
+
+  ipcMain.handle('chats:set-model', (_e, chatId: string, model?: string) => {
+    getSession(chatId)?.setPreferredModel(model)
   })
 
   ipcMain.handle('chats:interrupt', async (_e, chatId: string) => {

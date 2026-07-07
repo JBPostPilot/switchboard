@@ -298,6 +298,24 @@ code {
   color: var(--text);
   border-color: var(--line);
 }
+.model-select {
+  -webkit-app-region: no-drag;
+  appearance: none;
+  background: var(--panel-2);
+  border: 1px solid transparent;
+  border-radius: 9px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 24px 5px 10px;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5'%3E%3Cpath d='M0 0l4 5 4-5z' fill='%2398989d'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 9px center;
+}
+.model-select:hover {
+  color: var(--text);
+}
 
 .thread {
   flex: 1;
@@ -357,7 +375,94 @@ code {
 }
 .msg-claude .body {
   padding-top: 2px;
-  white-space: pre-wrap;
+  min-width: 0;
+}
+
+/* ---- markdown in Claude's replies ---- */
+.markdown > *:first-child {
+  margin-top: 0;
+}
+.markdown > *:last-child {
+  margin-bottom: 0;
+}
+.markdown p,
+.markdown ul,
+.markdown ol,
+.markdown blockquote,
+.markdown pre,
+.markdown table {
+  margin: 0 0 10px;
+}
+.markdown h1,
+.markdown h2,
+.markdown h3,
+.markdown h4 {
+  font-size: 14.5px;
+  font-weight: 650;
+  margin: 14px 0 6px;
+  letter-spacing: -0.01em;
+}
+.markdown h1 {
+  font-size: 16px;
+}
+.markdown ul,
+.markdown ol {
+  padding-left: 22px;
+}
+.markdown li {
+  margin: 3px 0;
+}
+.markdown code {
+  background: var(--panel-2);
+  border-radius: 5px;
+  padding: 1px 5px;
+  font-size: 12px;
+}
+.markdown pre {
+  background: var(--card);
+  border: 1px solid var(--line-soft);
+  border-radius: 10px;
+  padding: 10px 12px;
+  overflow-x: auto;
+}
+.markdown pre code {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+.markdown blockquote {
+  border-left: 3px solid var(--line);
+  padding-left: 12px;
+  color: var(--muted);
+}
+.markdown a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.markdown a:hover {
+  text-decoration: underline;
+}
+.markdown hr {
+  border: 0;
+  border-top: 1px solid var(--line-soft);
+  margin: 12px 0;
+}
+.markdown table {
+  border-collapse: collapse;
+  font-size: 13px;
+  display: block;
+  overflow-x: auto;
+}
+.markdown th,
+.markdown td {
+  border: 1px solid var(--line);
+  padding: 5px 10px;
+  text-align: left;
+}
+.markdown th {
+  background: var(--panel-2);
+  font-weight: 600;
 }
 
 .steps {
@@ -612,6 +717,32 @@ code {
   font-size: 12px;
   color: var(--faint);
   margin-top: 8px;
+}
+.cmd-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0 -8px;
+}
+.cmd {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  text-align: left;
+  border-radius: 9px;
+  padding: 7px 8px;
+}
+.cmd:hover {
+  background: var(--panel-2);
+}
+.cmd .slash {
+  color: var(--accent);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.cmd .cmd-desc {
+  font-size: 11.5px;
+  color: var(--faint);
 }
 .chips {
   display: flex;
