@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ChatSession } from './sessions'
+import { listEditors, openInEditor } from './editors'
 import { getModels, loadCachedModels, refreshModels } from './models'
 import { getProjectInfo } from './projectInfo'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
@@ -53,7 +54,9 @@ function projectsRoot(): string {
 function createChatMeta(cwd: string): ChatMeta {
   return {
     id: randomUUID(),
-    title: 'New chat',
+    // Chats are named for their project until the first message earns them
+    // an LLM-written summary title (see ChatSession.send).
+    title: path.basename(cwd),
     cwd,
     status: 'idle',
     statusLine: 'Ready when you are',
@@ -206,6 +209,22 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('project:info', (_e, cwd: string) => getProjectInfo(cwd))
+
+  // Only folders that belong to a chat can be revealed/opened — the renderer
+  // can't point these at arbitrary paths.
+  const chatCwd = (cwd: string): string | undefined => chats.find((c) => c.cwd === cwd)?.cwd
+
+  ipcMain.handle('project:reveal', (_e, cwd: string) => {
+    const safe = chatCwd(cwd)
+    if (safe) shell.showItemInFolder(safe)
+  })
+
+  ipcMain.handle('project:editors', () => listEditors())
+
+  ipcMain.handle('project:open-in', (_e, cwd: string, editorName: string) => {
+    const safe = chatCwd(cwd)
+    if (safe) openInEditor(editorName, safe)
+  })
 
   createWindow()
 

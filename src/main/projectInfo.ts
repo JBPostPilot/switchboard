@@ -38,15 +38,31 @@ export async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
   const hasClaudeMd =
     fs.existsSync(path.join(cwd, 'CLAUDE.md')) || fs.existsSync(path.join(cwd, '.claude', 'CLAUDE.md'))
 
-  let mcpServers: string[] = []
+  // Static discovery — what's configured on disk before a session starts.
+  // Servers can live in three places: the project's .mcp.json (project scope),
+  // ~/.claude.json top-level mcpServers (user scope), and ~/.claude.json
+  // projects[cwd].mcpServers (local scope — what `claude mcp add` writes).
+  // claude.ai connectors live account-side only; those appear once a chat's
+  // session is running (ChatMeta.mcp).
+  const names = new Set<string>()
   try {
     const mcp = JSON.parse(fs.readFileSync(path.join(cwd, '.mcp.json'), 'utf8')) as {
       mcpServers?: Record<string, unknown>
     }
-    mcpServers = Object.keys(mcp.mcpServers ?? {})
+    for (const name of Object.keys(mcp.mcpServers ?? {})) names.add(name)
   } catch {
-    mcpServers = []
+    // no project .mcp.json
+  }
+  try {
+    const cfg = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude.json'), 'utf8')) as {
+      mcpServers?: Record<string, unknown>
+      projects?: Record<string, { mcpServers?: Record<string, unknown> }>
+    }
+    for (const name of Object.keys(cfg.mcpServers ?? {})) names.add(name)
+    for (const name of Object.keys(cfg.projects?.[cwd]?.mcpServers ?? {})) names.add(name)
+  } catch {
+    // no ~/.claude.json
   }
 
-  return { cwd, branch, skills, hasClaudeMd, mcpServers }
+  return { cwd, branch, skills, hasClaudeMd, mcpServers: [...names] }
 }

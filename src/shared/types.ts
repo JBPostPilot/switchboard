@@ -5,6 +5,8 @@ export type ChatStatus = 'working' | 'needs-you' | 'idle' | 'error'
 export interface ChatMeta {
   id: string
   title: string
+  // True once an LLM summary title has replaced the folder-name default.
+  titled?: boolean
   cwd: string
   sessionId?: string
   status: ChatStatus
@@ -14,8 +16,16 @@ export interface ChatMeta {
   preferredModel?: string
   costUsd?: number
   contextTokens?: number
+  // Live MCP connections reported by the running session (includes claude.ai
+  // connectors, which exist only account-side and are invisible on disk).
+  mcp?: McpServer[]
   createdAt: number
   updatedAt: number
+}
+
+export interface McpServer {
+  name: string
+  status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
 }
 
 // A single renderable item in a chat thread.
@@ -41,6 +51,11 @@ export interface ModelChoice {
   id: string
   label: string
   description?: string
+}
+
+export interface EditorApp {
+  name: string
+  appPath: string
 }
 
 export interface ProjectInfo {

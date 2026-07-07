@@ -1,6 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { query } from '@anthropic-ai/claude-agent-sdk'
-import type { ChatMeta, ChatEvent, ChatStatus, PermissionDecision, ThreadItem } from '../shared/types'
+import { generateChatTitle } from './titles'
+import type {
+  ChatMeta,
+  ChatEvent,
+  ChatStatus,
+  McpServer,
+  PermissionDecision,
+  ThreadItem
+} from '../shared/types'
 
 // A push-based async iterable: the SDK consumes it as the session's user-message
 // stream, and we push into it whenever the user hits send.
@@ -136,6 +144,9 @@ export class ChatSession {
       if (typeof message.session_id === 'string') this.meta.sessionId = message.session_id
       if (typeof message.model === 'string') this.meta.model = message.model
       this.touch()
+      // MCP servers (including claude.ai connectors) connect asynchronously
+      // after init — give them a moment, then report real statuses.
+      setTimeout(() => void this.refreshMcp(), 4000)
       return
     }
 
@@ -178,7 +189,22 @@ export class ChatSession {
         })
       }
       this.setStatus('idle', this.meta.preview || 'Ready when you are')
+      void this.refreshMcp() // statuses can change mid-chat (e.g. after auth)
       return
+    }
+  }
+
+  private async refreshMcp(): Promise<void> {
+    const q = this.q as {
+      mcpServerStatus?: () => Promise<{ name: string; status: McpServer['status'] }[]>
+    } | null
+    if (!q?.mcpServerStatus) return
+    try {
+      const statuses = await q.mcpServerStatus()
+      this.meta.mcp = statuses.map((s) => ({ name: s.name, status: s.status }))
+      this.touch()
+    } catch {
+      // Session may be shutting down or between turns — keep the last known list.
     }
   }
 
@@ -234,15 +260,28 @@ export class ChatSession {
   send(text: string): void {
     this.start()
     this.pushItem({ kind: 'user', id: randomUUID(), text, ts: Date.now() })
-    if (this.meta.title === 'New chat') {
-      this.meta.title = text.length > 42 ? text.slice(0, 39) + '…' : text
-    }
+    if (!this.meta.titled) this.autoTitle(text)
     this.queue.push({
       type: 'user',
       message: { role: 'user', content: text },
       parent_tool_use_id: null
     })
     this.setStatus('working', 'Working…')
+  }
+
+  // Replace the folder-name title with an LLM summary, in the background.
+  // On failure the flag stays unset, so the next message tries again.
+  private titling = false
+  private autoTitle(text: string): void {
+    if (this.titling) return
+    this.titling = true
+    void generateChatTitle(text).then((title) => {
+      this.titling = false
+      if (!title) return
+      this.meta.title = title
+      this.meta.titled = true
+      this.touch()
+    })
   }
 
   setPreferredModel(model?: string): void {

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type {
   ChatEvent,
   ChatMeta,
+  EditorApp,
   ModelChoice,
   PermissionDecision,
   ProjectInfo,
@@ -31,6 +32,10 @@ const api = {
   getItems: (chatId: string): Promise<ThreadItem[]> => ipcRenderer.invoke('chats:items', chatId),
   getRaw: (chatId: string): Promise<unknown[]> => ipcRenderer.invoke('chats:raw', chatId),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),
+  revealInFinder: (cwd: string): Promise<void> => ipcRenderer.invoke('project:reveal', cwd),
+  listEditors: (): Promise<EditorApp[]> => ipcRenderer.invoke('project:editors'),
+  openInEditor: (cwd: string, editorName: string): Promise<void> =>
+    ipcRenderer.invoke('project:open-in', cwd, editorName),
   onChatEvent: (callback: (event: ChatEvent) => void): (() => void) => {
     const listener = (_e: unknown, event: ChatEvent): void => callback(event)
     ipcRenderer.on('chat:event', listener)

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatMeta, ModelChoice, ProjectInfo, ThreadItem } from '../../shared/types'
+import type { ChatMeta, EditorApp, ModelChoice, ProjectInfo, ThreadItem } from '../../shared/types'
 
 const sb = window.switchboard
 
@@ -33,6 +33,24 @@ function Markdown({ text }: { text: string }): React.JSX.Element {
 
 function shortPath(p: string): string {
   return p.replace(/^\/Users\/[^/]+/, '~')
+}
+
+// Every chat in the same project folder gets the same color, so a project's
+// chats read as a family in the sidebar. The hue is a stable hash of the path;
+// light/dark shades are resolved in CSS so the badge follows the OS theme.
+function projectHue(cwd: string): number {
+  let h = 0
+  for (let i = 0; i < cwd.length; i++) h = (h * 31 + cwd.charCodeAt(i)) % 360
+  return h
+}
+
+function ProjectAvatar({ cwd }: { cwd: string }): React.JSX.Element {
+  const name = cwd.split('/').filter(Boolean).pop() ?? '?'
+  return (
+    <span className="avatar project" style={{ '--hue': projectHue(cwd) } as React.CSSProperties}>
+      {name.slice(0, 1).toUpperCase()}
+    </span>
+  )
 }
 
 function timeAgo(ts: number): string {
@@ -352,7 +370,7 @@ function Sidebar({
                     if (e.key === 'Enter') onSelect(c.id)
                   }}
                 >
-                  <span className="avatar">{c.title === 'New chat' ? '＋' : c.title.slice(0, 1).toUpperCase()}</span>
+                  <ProjectAvatar cwd={c.cwd} />
                   <span className="chat-name">{c.title}</span>
                   <span className="chat-time">{timeAgo(c.updatedAt)}</span>
                   <span className={`chat-preview ${c.status === 'needs-you' || c.status === 'error' ? 'attn' : c.status === 'working' ? 'work' : ''}`}>
@@ -434,7 +452,7 @@ function ChatPane({
   return (
     <section className="chat">
       <div className="chat-head drag">
-        <span className="avatar">{chat.title.slice(0, 1).toUpperCase()}</span>
+        <ProjectAvatar cwd={chat.cwd} />
         <div>
           <div className="chat-head-name">{chat.title}</div>
           <div className="chat-head-sub">{shortPath(chat.cwd)}</div>
@@ -605,6 +623,12 @@ function DetailsPanel({
   info: ProjectInfo | null
   onUseCommand: (cmd: string) => void
 }): React.JSX.Element {
+  const [editors, setEditors] = useState<EditorApp[]>([])
+
+  useEffect(() => {
+    void sb.listEditors().then(setEditors)
+  }, [])
+
   return (
     <aside className="details">
       <div className="d-section">
@@ -631,6 +655,25 @@ function DetailsPanel({
             </>
           )}
         </dl>
+        <div className="open-row">
+          <button
+            className="open-btn"
+            title="Show this folder in Finder"
+            onClick={() => void sb.revealInFinder(chat.cwd)}
+          >
+            Reveal in Finder
+          </button>
+          {editors.map((ed) => (
+            <button
+              className="open-btn"
+              key={ed.name}
+              title={`Open this folder in ${ed.name}`}
+              onClick={() => void sb.openInEditor(chat.cwd, ed.name)}
+            >
+              {ed.name}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="d-section">
         <h3>Project shortcuts</h3>
@@ -663,24 +706,69 @@ function DetailsPanel({
           ))}
         </div>
       </div>
-      <div className="d-section">
-        <h3>Connected apps</h3>
-        <div className="chips">
-          {info && info.mcpServers.length > 0 ? (
-            info.mcpServers.map((m) => (
-              <span className="chip" key={m}>
-                {m}
-              </span>
-            ))
-          ) : (
-            <span className="chip off">None connected</span>
-          )}
-          <span className={`chip ${info?.hasClaudeMd ? '' : 'off'}`}>
-            Project notes {info?.hasClaudeMd ? '✓' : '—'}
-          </span>
-        </div>
-      </div>
+      <ConnectedApps chat={chat} info={info} />
     </aside>
+  )
+}
+
+// Prefers the running session's live report (which includes claude.ai
+// connectors — invisible on disk); falls back to what's configured in
+// .mcp.json / ~/.claude.json before the chat starts.
+function ConnectedApps({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null }): React.JSX.Element {
+  const friendly = (name: string): string => name.replace(/^claude\.ai /, '').replace(/^plugin:/, '')
+  const live = chat.mcp?.filter((s) => s.status !== 'disabled')
+
+  let body: React.ReactNode
+  if (live && live.length > 0) {
+    const connected = live.filter((s) => s.status === 'connected')
+    const waiting = live.filter((s) => s.status === 'needs-auth' || s.status === 'pending')
+    const failed = live.filter((s) => s.status === 'failed')
+    body = (
+      <>
+        {connected.map((s) => (
+          <span className="chip" key={s.name} title={s.name}>
+            {friendly(s.name)}
+          </span>
+        ))}
+        {failed.map((s) => (
+          <span className="chip err" key={s.name} title={`${s.name} couldn’t connect`}>
+            {friendly(s.name)} !
+          </span>
+        ))}
+        {waiting.length > 0 && (
+          <span className="chip off" title={waiting.map((s) => friendly(s.name)).join(', ')}>
+            {waiting.length} not signed in
+          </span>
+        )}
+      </>
+    )
+  } else if (info && info.mcpServers.length > 0) {
+    body = (
+      <>
+        {info.mcpServers.map((m) => (
+          <span className="chip" key={m}>
+            {m}
+          </span>
+        ))}
+      </>
+    )
+  } else {
+    body = <span className="chip off">None yet</span>
+  }
+
+  return (
+    <div className="d-section">
+      <h3>Connected apps</h3>
+      <div className="chips">
+        {body}
+        <span className={`chip ${info?.hasClaudeMd ? '' : 'off'}`}>
+          Project notes {info?.hasClaudeMd ? '✓' : '—'}
+        </span>
+      </div>
+      {(!live || live.length === 0) && (
+        <p className="d-hint">Your claude.ai connectors appear once the chat starts.</p>
+      )}
+    </div>
   )
 }
 
