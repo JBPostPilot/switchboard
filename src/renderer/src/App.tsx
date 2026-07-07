@@ -84,12 +84,9 @@ export default function App(): React.JSX.Element {
     void sb.getProjectInfo(current.cwd).then(setInfo)
   }, [current?.cwd, current?.status === 'idle'])
 
-  const newChat = useCallback(async () => {
-    const meta = await sb.createChat()
-    if (meta) {
-      setChats((prev) => [meta, ...prev])
-      setCurrentId(meta.id)
-    }
+  const chatCreated = useCallback((meta: ChatMeta) => {
+    setChats((prev) => [meta, ...prev])
+    setCurrentId(meta.id)
   }, [])
 
   const send = useCallback(
@@ -126,7 +123,7 @@ export default function App(): React.JSX.Element {
 
   return (
     <div className="app">
-      <Sidebar chats={chats} currentId={currentId} onSelect={setCurrentId} onNew={newChat} />
+      <Sidebar chats={chats} currentId={currentId} onSelect={setCurrentId} onCreated={chatCreated} />
       {current ? (
         <>
           <ChatPane
@@ -142,7 +139,94 @@ export default function App(): React.JSX.Element {
           <DetailsPanel chat={current} info={info} />
         </>
       ) : (
-        <EmptyState onNew={newChat} />
+        <EmptyState onCreated={chatCreated} />
+      )}
+    </div>
+  )
+}
+
+function NewChatControl({
+  onCreated,
+  triggerClass,
+  triggerLabel
+}: {
+  onCreated: (meta: ChatMeta) => void
+  triggerClass: string
+  triggerLabel: React.ReactNode
+}): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [root, setRoot] = useState('')
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (open) void sb.getProjectsRoot().then(setRoot)
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const finish = (meta: ChatMeta | null): void => {
+    if (meta) onCreated(meta)
+    setOpen(false)
+    setName('')
+  }
+
+  const openFolder = async (): Promise<void> => finish(await sb.createChat())
+  const createProject = async (): Promise<void> => {
+    const trimmed = name.trim()
+    if (!trimmed) return
+    finish(await sb.createChat({ newProjectName: trimmed }))
+  }
+
+  return (
+    <div className="newchat-wrap" ref={wrapRef}>
+      <button className={triggerClass} onClick={() => setOpen((v) => !v)}>
+        {triggerLabel}
+      </button>
+      {open && (
+        <div className="newchat-pop" role="menu">
+          <button className="newchat-option" onClick={() => void openFolder()}>
+            <span className="newchat-option-title">Open a folder…</span>
+            <span className="newchat-option-desc">Chat in a project you already have</span>
+          </button>
+          <div className="newchat-divider" />
+          <div className="newchat-option static">
+            <span className="newchat-option-title">Create a new project</span>
+            <div className="newchat-name-row">
+              <input
+                value={name}
+                placeholder="project-name"
+                autoFocus
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') void createProject()
+                }}
+              />
+              <button className="btn primary" disabled={!name.trim()} onClick={() => void createProject()}>
+                Create
+              </button>
+            </div>
+            {root && (
+              <span className="newchat-option-desc">
+                Makes a new folder in {root.replace(/^\/Users\/[^/]+/, '~')}
+              </span>
+            )}
+          </div>
+        </div>
       )}
     </div>
   )
@@ -152,12 +236,12 @@ function Sidebar({
   chats,
   currentId,
   onSelect,
-  onNew
+  onCreated
 }: {
   chats: ChatMeta[]
   currentId: string | null
   onSelect: (id: string) => void
-  onNew: () => void
+  onCreated: (meta: ChatMeta) => void
 }): React.JSX.Element {
   return (
     <aside className="rail">
@@ -196,9 +280,15 @@ function Sidebar({
           )
         })}
       </div>
-      <button className="rail-new" onClick={onNew}>
-        <span className="plus">+</span>New chat in a project…
-      </button>
+      <NewChatControl
+        onCreated={onCreated}
+        triggerClass="rail-new"
+        triggerLabel={
+          <>
+            <span className="plus">+</span>New chat…
+          </>
+        }
+      />
     </aside>
   )
 }
@@ -449,19 +539,21 @@ function DetailsPanel({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null
   )
 }
 
-function EmptyState({ onNew }: { onNew: () => void }): React.JSX.Element {
+function EmptyState({ onCreated }: { onCreated: (meta: ChatMeta) => void }): React.JSX.Element {
   return (
     <section className="chat empty drag">
       <div className="empty-inner no-drag">
         <div className="empty-spark">✳</div>
         <h2>Welcome to Switchboard</h2>
         <p>
-          Every chat lives in one of your project folders. Claude can read the code, make changes, and
-          run commands there — and it asks before doing anything that needs your OK.
+          Every chat lives in a project folder. Claude can read the code, make changes, and run
+          commands there — and it asks before doing anything that needs your OK.
         </p>
-        <button className="btn primary big" onClick={onNew}>
-          Start your first chat
-        </button>
+        <NewChatControl
+          onCreated={onCreated}
+          triggerClass="btn primary big"
+          triggerLabel="Start your first chat"
+        />
       </div>
     </section>
   )

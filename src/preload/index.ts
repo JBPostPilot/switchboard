@@ -3,7 +3,9 @@ import type { ChatEvent, ChatMeta, PermissionDecision, ProjectInfo, ThreadItem }
 
 const api = {
   listChats: (): Promise<ChatMeta[]> => ipcRenderer.invoke('chats:list'),
-  createChat: (): Promise<ChatMeta | null> => ipcRenderer.invoke('chats:create'),
+  createChat: (opts?: { newProjectName?: string }): Promise<ChatMeta | null> =>
+    ipcRenderer.invoke('chats:create', opts),
+  getProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:root'),
   deleteChat: (chatId: string): Promise<ChatMeta[]> => ipcRenderer.invoke('chats:delete', chatId),
   sendMessage: (chatId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('chats:send', chatId, text),

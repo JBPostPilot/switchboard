@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
 import path from 'node:path'
 import { ChatSession } from './sessions'
 import { getProjectInfo } from './projectInfo'
@@ -30,6 +31,35 @@ function getSession(chatId: string): ChatSession | undefined {
   session.items = loadItems(chatId)
   sessions.set(chatId, session)
   return session
+}
+
+// Where brand-new projects are created, and where the folder picker starts.
+// First existing conventional dev directory wins; ~/Projects is created as a
+// fallback if none exist.
+function projectsRoot(): string {
+  const home = app.getPath('home')
+  const candidates = ['Documents/Development', 'Development', 'Projects', 'code', 'dev'].map((p) =>
+    path.join(home, p)
+  )
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
+  }
+  const fallback = path.join(home, 'Projects')
+  fs.mkdirSync(fallback, { recursive: true })
+  return fallback
+}
+
+function createChatMeta(cwd: string): ChatMeta {
+  return {
+    id: randomUUID(),
+    title: 'New chat',
+    cwd,
+    status: 'idle',
+    statusLine: 'Ready when you are',
+    preview: `New chat in ${path.basename(cwd)}`,
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  }
 }
 
 function createWindow(): void {
@@ -64,24 +94,26 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:list', () => chats)
 
-  ipcMain.handle('chats:create', async () => {
-    if (!win) return null
-    const picked = await dialog.showOpenDialog(win, {
-      title: 'Choose a project folder for this chat',
-      properties: ['openDirectory', 'createDirectory']
-    })
-    if (picked.canceled || picked.filePaths.length === 0) return null
-    const cwd = picked.filePaths[0]
-    const meta: ChatMeta = {
-      id: randomUUID(),
-      title: 'New chat',
-      cwd,
-      status: 'idle',
-      statusLine: 'Ready when you are',
-      preview: `New chat in ${path.basename(cwd)}`,
-      createdAt: Date.now(),
-      updatedAt: Date.now()
+  ipcMain.handle('projects:root', () => projectsRoot())
+
+  ipcMain.handle('chats:create', async (_e, opts?: { newProjectName?: string }) => {
+    let cwd: string
+    if (opts?.newProjectName) {
+      const safe = opts.newProjectName.trim().replace(/[/:\\]/g, '-')
+      if (!safe) return null
+      cwd = path.join(projectsRoot(), safe)
+      fs.mkdirSync(cwd, { recursive: true })
+    } else {
+      if (!win) return null
+      const picked = await dialog.showOpenDialog(win, {
+        title: 'Choose a project folder for this chat',
+        defaultPath: projectsRoot(),
+        properties: ['openDirectory', 'createDirectory']
+      })
+      if (picked.canceled || picked.filePaths.length === 0) return null
+      cwd = picked.filePaths[0]
     }
+    const meta = createChatMeta(cwd)
     chats.unshift(meta)
     persistAll()
     return meta
