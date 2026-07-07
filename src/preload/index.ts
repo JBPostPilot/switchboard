@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  AuthStatus,
   ChatEvent,
   ChatMeta,
   EditorApp,
@@ -14,6 +15,9 @@ const api = {
   listChats: (): Promise<ChatMeta[]> => ipcRenderer.invoke('chats:list'),
   createChat: (opts?: { newProjectName?: string }): Promise<ChatMeta | null> =>
     ipcRenderer.invoke('chats:create', opts),
+  getAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:status'),
+  openLogin: (): Promise<void> => ipcRenderer.invoke('auth:open-login'),
+  setApiKey: (key: string | null): Promise<AuthStatus> => ipcRenderer.invoke('auth:set-key', key),
   getProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:root'),
   chooseProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:choose-root'),
   deleteChat: (chatId: string): Promise<ChatMeta[] | null> =>

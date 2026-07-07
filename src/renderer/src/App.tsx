@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
+  AuthStatus,
   ChatMeta,
   ChatQuestion,
   EditorApp,
@@ -88,12 +89,24 @@ export default function App(): React.JSX.Element {
   const [info, setInfo] = useState<ProjectInfo | null>(null)
   const [models, setModels] = useState<ModelChoice[]>(FALLBACK_MODELS)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [draft, setDraft] = useState('')
   const composerRef = useRef<HTMLInputElement>(null)
   const currentIdRef = useRef(currentId)
   currentIdRef.current = currentId
 
   const current = chats.find((c) => c.id === currentId) ?? null
+
+  // Auth gate: check once at launch, then poll while unauthenticated so
+  // finishing the Terminal sign-in advances the app automatically.
+  useEffect(() => {
+    void sb.getAuthStatus().then(setAuth)
+  }, [])
+  useEffect(() => {
+    if (auth?.method !== 'none') return
+    const timer = setInterval(() => void sb.getAuthStatus().then(setAuth), 3000)
+    return () => clearInterval(timer)
+  }, [auth?.method])
 
   useEffect(() => {
     void sb.listChats().then((list) => {
@@ -243,6 +256,13 @@ export default function App(): React.JSX.Element {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [pendingAsk, pendingQuestion, decide, answer, paletteOpen])
+
+  if (auth === null) {
+    return <div className="app drag" />
+  }
+  if (auth.method === 'none') {
+    return <Onboarding onAuthed={setAuth} />
+  }
 
   return (
     <div className="app">
@@ -1042,6 +1062,95 @@ function ConnectedApps({ chat, info }: { chat: ChatMeta; info: ProjectInfo | nul
       {(!live || live.length === 0) && (
         <p className="d-hint">Your claude.ai connectors appear once the chat starts.</p>
       )}
+    </div>
+  )
+}
+
+function Onboarding({ onAuthed }: { onAuthed: (a: AuthStatus) => void }): React.JSX.Element {
+  const [mode, setMode] = useState<'choose' | 'waiting' | 'key'>('choose')
+  const [key, setKey] = useState('')
+  const [keyError, setKeyError] = useState(false)
+
+  const signIn = (): void => {
+    void sb.openLogin()
+    setMode('waiting')
+  }
+
+  const saveKey = async (): Promise<void> => {
+    const trimmed = key.trim()
+    if (!trimmed.startsWith('sk-ant-')) {
+      setKeyError(true)
+      return
+    }
+    const status = await sb.setApiKey(trimmed)
+    onAuthed(status)
+  }
+
+  return (
+    <div className="app drag onboarding">
+      <div className="onboard-inner no-drag">
+        <div className="empty-spark">✳</div>
+        <h2>Welcome to Switchboard</h2>
+        <p>
+          Switchboard runs <strong>Claude Code</strong> — Anthropic’s coding agent — as friendly
+          chats, one per project. Connect your Claude account to get started.
+        </p>
+
+        {mode === 'choose' && (
+          <div className="onboard-actions">
+            <button className="btn primary big" onClick={signIn}>
+              Sign in with your Claude account
+            </button>
+            <button className="btn quiet" onClick={() => setMode('key')}>
+              Use an API key instead
+            </button>
+          </div>
+        )}
+
+        {mode === 'waiting' && (
+          <div className="onboard-waiting">
+            <span className="spinner" />
+            <p>
+              Finish signing in from the Terminal window that just opened — Switchboard will notice
+              automatically.
+            </p>
+            <button className="btn quiet" onClick={signIn}>
+              Reopen the sign-in window
+            </button>
+          </div>
+        )}
+
+        {mode === 'key' && (
+          <div className="onboard-key">
+            <input
+              autoFocus
+              type="password"
+              placeholder="sk-ant-…"
+              value={key}
+              onChange={(e) => {
+                setKey(e.target.value)
+                setKeyError(false)
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void saveKey()
+              }}
+            />
+            {keyError && <p className="onboard-error">That doesn’t look like an Anthropic API key.</p>}
+            <div className="onboard-actions">
+              <button className="btn primary" disabled={!key.trim()} onClick={() => void saveKey()}>
+                Save key
+              </button>
+              <button className="btn quiet" onClick={() => setMode('choose')}>
+                Back
+              </button>
+            </div>
+            <p className="onboard-hint">
+              Stored encrypted with your Mac’s keychain, only on this computer. Get a key at
+              platform.claude.com.
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   )
 }

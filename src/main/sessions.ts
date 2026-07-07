@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { query } from '@anthropic-ai/claude-agent-sdk'
+import { sessionEnv } from './auth'
 import { generateChatTitle } from './titles'
 import type {
   ChatMeta,
@@ -112,6 +113,7 @@ export class ChatSession {
         settingSources: ['user', 'project', 'local'],
         systemPrompt: { type: 'preset', preset: 'claude_code' },
         resume: this.meta.sessionId,
+        env: sessionEnv() ? ({ ...process.env, ...sessionEnv() } as Record<string, string>) : undefined,
         canUseTool: (toolName: string, input: Record<string, unknown>, opts?: { suggestions?: unknown[] }) =>
           this.requestPermission(toolName, input, opts?.suggestions ?? []) as never
       }

@@ -76,6 +76,10 @@ export interface ModelChoice {
   description?: string
 }
 
+export interface AuthStatus {
+  method: 'subscription' | 'env-key' | 'stored-key' | 'none'
+}
+
 export interface EditorApp {
   name: string
   appPath: string

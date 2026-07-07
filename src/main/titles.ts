@@ -1,4 +1,5 @@
 import { query } from '@anthropic-ai/claude-agent-sdk'
+import { sessionEnv } from './auth'
 
 // Name a chat from its first message: one cheap, tool-less Haiku turn.
 // Returns null on any failure — the chat just keeps its folder-name title.
@@ -11,7 +12,13 @@ export async function generateChatTitle(firstMessage: string): Promise<string | 
   try {
     const q = query({
       prompt,
-      options: { model: 'haiku', settingSources: [], maxTurns: 1, allowedTools: [] }
+      options: {
+        model: 'haiku',
+        settingSources: [],
+        maxTurns: 1,
+        allowedTools: [],
+        env: sessionEnv() ? ({ ...process.env, ...sessionEnv() } as Record<string, string>) : undefined
+      }
     })
     for await (const message of q as AsyncIterable<Record<string, unknown>>) {
       if (message.type === 'result') {

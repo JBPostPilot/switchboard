@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from '
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
+import { authStatus, openLoginTerminal, setStoredApiKey } from './auth'
 import { ChatSession } from './sessions'
 import { listEditors, openInEditor } from './editors'
 import { getModels, loadCachedModels, refreshModels } from './models'
@@ -201,6 +202,13 @@ app.whenReady().then(() => {
   ipcMain.handle('models:list', () => getModels())
 
   ipcMain.handle('chats:list', () => chats)
+
+  ipcMain.handle('auth:status', () => authStatus())
+  ipcMain.handle('auth:open-login', () => openLoginTerminal())
+  ipcMain.handle('auth:set-key', (_e, key: string | null) => {
+    setStoredApiKey(key)
+    return authStatus()
+  })
 
   ipcMain.handle('projects:root', () => projectsRoot())
 

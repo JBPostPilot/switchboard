@@ -2,6 +2,7 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { query } from '@anthropic-ai/claude-agent-sdk'
+import { sessionEnv } from './auth'
 import { AsyncQueue } from './sessions'
 import type { ModelChoice } from '../shared/types'
 
@@ -32,7 +33,12 @@ async function fetchFromEngine(): Promise<ModelChoice[]> {
   const abort = new AbortController()
   const q = query({
     prompt: queue,
-    options: { settingSources: [], maxTurns: 1, abortController: abort }
+    options: {
+      settingSources: [],
+      maxTurns: 1,
+      abortController: abort,
+      env: sessionEnv() ? ({ ...process.env, ...sessionEnv() } as Record<string, string>) : undefined
+    }
   })
   try {
     const models = await (q as unknown as {
