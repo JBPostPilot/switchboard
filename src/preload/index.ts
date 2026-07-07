@@ -5,6 +5,7 @@ import type {
   EditorApp,
   ModelChoice,
   PermissionDecision,
+  PermissionModeChoice,
   ProjectInfo,
   ThreadItem
 } from '../shared/types'
@@ -36,6 +37,8 @@ const api = {
   setModel: (chatId: string, model?: string): Promise<void> =>
     ipcRenderer.invoke('chats:set-model', chatId, model),
   listModels: (): Promise<ModelChoice[]> => ipcRenderer.invoke('models:list'),
+  setPermissionMode: (chatId: string, mode: PermissionModeChoice): Promise<void> =>
+    ipcRenderer.invoke('chats:set-permission-mode', chatId, mode),
   getItems: (chatId: string): Promise<ThreadItem[]> => ipcRenderer.invoke('chats:items', chatId),
   getRaw: (chatId: string): Promise<unknown[]> => ipcRenderer.invoke('chats:raw', chatId),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),

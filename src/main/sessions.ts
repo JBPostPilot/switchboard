@@ -7,6 +7,7 @@ import type {
   ChatStatus,
   McpServer,
   PermissionDecision,
+  PermissionModeChoice,
   ThreadItem
 } from '../shared/types'
 
@@ -104,7 +105,7 @@ export class ChatSession {
       options: {
         cwd: this.meta.cwd,
         model: this.meta.preferredModel,
-        permissionMode: 'default',
+        permissionMode: this.meta.permissionMode ?? 'default',
         includePartialMessages: true,
         // Behave like a normal `claude` session in this folder: load the
         // user's + project's settings, CLAUDE.md, skills, and MCP servers.
@@ -390,6 +391,13 @@ export class ChatSession {
       this.meta.titled = true
       this.touch()
     })
+  }
+
+  setPermissionModePref(mode: PermissionModeChoice): void {
+    this.meta.permissionMode = mode
+    const q = this.q as { setPermissionMode?: (m: string) => Promise<void> } | null
+    if (q?.setPermissionMode) void q.setPermissionMode(mode).catch(() => {})
+    this.touch()
   }
 
   setPreferredModel(model?: string): void {

@@ -14,6 +14,7 @@ export interface ChatMeta {
   preview: string
   model?: string
   preferredModel?: string
+  permissionMode?: PermissionModeChoice
   costUsd?: number
   contextTokens?: number
   // Live MCP connections reported by the running session (includes claude.ai
@@ -62,6 +63,8 @@ export interface ChatQuestion {
 }
 
 export type PermissionDecision = 'allow' | 'always' | 'deny'
+
+export type PermissionModeChoice = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
 
 export interface ModelChoice {
   id: string

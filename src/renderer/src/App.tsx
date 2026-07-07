@@ -895,6 +895,24 @@ function DetailsPanel({
             </>
           )}
         </dl>
+        <div className="perm-row">
+          <label className="perm-label" htmlFor="perm-mode">
+            When Claude acts
+          </label>
+          <select
+            id="perm-mode"
+            className="model-select perm-select"
+            value={chat.permissionMode ?? 'default'}
+            onChange={(e) =>
+              void sb.setPermissionMode(chat.id, e.target.value as Parameters<typeof sb.setPermissionMode>[1])
+            }
+          >
+            <option value="default">Ask before acting</option>
+            <option value="acceptEdits">Auto-accept file edits</option>
+            <option value="plan">Plan first — read-only</option>
+            <option value="bypassPermissions">Never ask (full auto)</option>
+          </select>
+        </div>
         <div className="open-row">
           <button
             className="open-btn"

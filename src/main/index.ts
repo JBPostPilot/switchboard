@@ -7,7 +7,7 @@ import { listEditors, openInEditor } from './editors'
 import { getModels, loadCachedModels, refreshModels } from './models'
 import { getProjectInfo } from './projectInfo'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
-import type { ChatEvent, ChatMeta, PermissionDecision } from '../shared/types'
+import type { ChatEvent, ChatMeta, PermissionDecision, PermissionModeChoice } from '../shared/types'
 
 const sessions = new Map<string, ChatSession>()
 let chats: ChatMeta[] = []
@@ -199,6 +199,10 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:set-model', (_e, chatId: string, model?: string) => {
     getSession(chatId)?.setPreferredModel(model)
+  })
+
+  ipcMain.handle('chats:set-permission-mode', (_e, chatId: string, mode: PermissionModeChoice) => {
+    getSession(chatId)?.setPermissionModePref(mode)
   })
 
   ipcMain.handle('chats:interrupt', async (_e, chatId: string) => {

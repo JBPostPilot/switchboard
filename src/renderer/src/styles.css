@@ -870,6 +870,19 @@ code {
   color: var(--faint);
   margin-top: 8px;
 }
+.perm-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 12px;
+}
+.perm-label {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+.perm-select {
+  width: 100%;
+}
 .cmd-list {
   display: flex;
   flex-direction: column;
