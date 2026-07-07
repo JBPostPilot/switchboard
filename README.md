@@ -44,6 +44,28 @@ npm run build      # production build into out/
 npm run dist       # package a .dmg (electron-builder)
 ```
 
+First launch shows a welcome screen if no Claude credentials exist: sign in with a Claude
+account (opens Terminal running the bundled engine) or paste an API key (stored encrypted
+with the Mac keychain, never in plaintext).
+
+### Signing & notarizing a release
+
+`npm run dist` produces a working unsigned DMG (users must right-click → Open the first
+time). For a properly signed + notarized build, you need an Apple Developer account with a
+**Developer ID Application** certificate in your keychain, then:
+
+```sh
+export APPLE_ID="you@example.com"
+export APPLE_APP_SPECIFIC_PASSWORD="xxxx-xxxx-xxxx-xxxx"   # appleid.apple.com → app-specific passwords
+export APPLE_TEAM_ID="XXXXXXXXXX"
+npm run dist
+```
+
+electron-builder finds the certificate automatically, signs everything (including the
+bundled Claude Code engine binary) with the hardened runtime + `build/entitlements.mac.plist`,
+notarizes with Apple, and staples the ticket. No credentials → it skips signing with a
+warning and still produces the DMG.
+
 ## Roadmap
 
 - [ ] Adopt existing terminal sessions (`claude --resume` list → chats)

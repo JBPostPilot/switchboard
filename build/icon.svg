@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- macOS app icon: rounded square with Apple's ~22.37% corner radius,
+       standard 100px margin, blue gradient ground, white spark (asterisk). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3396ff"/>
+      <stop offset="1" stop-color="#0066d6"/>
+    </linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="184" fill="url(#bg)"/>
+  <!-- six-armed spark, echoing the ✳ wordmark -->
+  <g stroke="#ffffff" stroke-width="64" stroke-linecap="round">
+    <line x1="512" y1="272" x2="512" y2="752"/>
+    <line x1="304" y1="392" x2="720" y2="632"/>
+    <line x1="304" y1="632" x2="720" y2="392"/>
+  </g>
+  <!-- message-bubble tail, quietly making it "chats", not just a spark -->
+  <circle cx="512" cy="512" r="86" fill="#ffffff"/>
+  <circle cx="512" cy="512" r="42" fill="#1a7fe8"/>
+</svg>

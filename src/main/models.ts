@@ -2,7 +2,7 @@ import { app } from 'electron'
 import fs from 'node:fs'
 import path from 'node:path'
 import { query } from '@anthropic-ai/claude-agent-sdk'
-import { sessionEnv } from './auth'
+import { claudeExecutablePath, sessionEnv } from './auth'
 import { AsyncQueue } from './sessions'
 import type { ModelChoice } from '../shared/types'
 
@@ -37,6 +37,7 @@ async function fetchFromEngine(): Promise<ModelChoice[]> {
       settingSources: [],
       maxTurns: 1,
       abortController: abort,
+      pathToClaudeCodeExecutable: claudeExecutablePath(),
       env: sessionEnv() ? ({ ...process.env, ...sessionEnv() } as Record<string, string>) : undefined
     }
   })

@@ -33,13 +33,29 @@
   "build": {
     "appId": "com.postpilot.switchboard",
     "productName": "Switchboard",
-    "mac": {
-      "category": "public.app-category.developer-tools",
-      "target": "dmg"
-    },
     "files": [
       "out/**/*",
       "package.json"
-    ]
+    ],
+    "asarUnpack": [
+      "node_modules/@anthropic-ai/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["arm64"]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "dmg": {
+      "artifactName": "Switchboard-${version}-${arch}.${ext}"
+    }
   }
 }

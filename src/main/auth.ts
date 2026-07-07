@@ -58,6 +58,16 @@ export function sessionEnv(): Record<string, string> | undefined {
   return key ? { ANTHROPIC_API_KEY: key } : undefined
 }
 
+// In a packaged app the SDK lives inside app.asar and would try to spawn its
+// bundled engine from within the archive (spawn ENOTDIR). Point every session
+// at the asarUnpack'd copy instead. In dev, the SDK resolves itself normally.
+export function claudeExecutablePath(): string | undefined {
+  if (!app.isPackaged) return undefined
+  const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`
+  const base = app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked')
+  return path.join(base, 'node_modules', pkg, 'claude')
+}
+
 // The engine binary to run for interactive login. Prefer the user's installed
 // CLI; fall back to the SDK's bundled binary (which exists even in a packaged
 // app, via asarUnpack) so brand-new users don't need anything preinstalled.
@@ -66,7 +76,7 @@ function claudeBinary(): string {
   if (fs.existsSync(installed)) return installed
   const pkg = `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}`
   const base = app.getAppPath().replace(/app\.asar$/, 'app.asar.unpacked')
-  return path.join(base, 'node_modules', pkg, 'claude')
+  return claudeExecutablePath() ?? path.join(base, 'node_modules', pkg, 'claude')
 }
 
 // Open Terminal running the engine: an unauthenticated `claude` walks the
