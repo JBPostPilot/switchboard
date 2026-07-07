@@ -16,6 +16,11 @@ const api = {
   getProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:root'),
   deleteChat: (chatId: string): Promise<ChatMeta[] | null> =>
     ipcRenderer.invoke('chats:delete', chatId),
+  onOpenChat: (callback: (chatId: string) => void): (() => void) => {
+    const listener = (_e: unknown, chatId: string): void => callback(chatId)
+    ipcRenderer.on('notification:open', listener)
+    return () => ipcRenderer.removeListener('notification:open', listener)
+  },
   onMenuAction: (callback: (action: string) => void): (() => void) => {
     const listener = (_e: unknown, action: string): void => callback(action)
     ipcRenderer.on('menu:action', listener)

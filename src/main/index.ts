@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -13,7 +13,32 @@ const sessions = new Map<string, ChatSession>()
 let chats: ChatMeta[] = []
 let win: BrowserWindow | null = null
 
+// Notify on attention transitions while the window is unfocused; clicking
+// the notification focuses the app and jumps to that chat.
+const lastStatus = new Map<string, string>()
+
+function maybeNotify(meta: ChatMeta): void {
+  const prev = lastStatus.get(meta.id)
+  lastStatus.set(meta.id, meta.status)
+  if (prev === meta.status || !Notification.isSupported()) return
+  if (win?.isFocused()) return
+
+  let body: string | null = null
+  if (meta.status === 'needs-you') body = meta.statusLine || 'Claude needs your reply'
+  else if (meta.status === 'idle' && prev === 'working') body = 'Done — ready for you'
+  if (!body) return
+
+  const n = new Notification({ title: meta.title, body })
+  n.on('click', () => {
+    win?.show()
+    win?.focus()
+    win?.webContents.send('notification:open', meta.id)
+  })
+  n.show()
+}
+
 function broadcast(event: ChatEvent): void {
+  if (event.meta) maybeNotify(event.meta)
   win?.webContents.send('chat:event', event)
 }
 

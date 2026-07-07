@@ -166,6 +166,10 @@ export default function App(): React.JSX.Element {
   }, [])
 
   useEffect(() => {
+    return sb.onOpenChat((chatId) => setCurrentId(chatId))
+  }, [])
+
+  useEffect(() => {
     return sb.onMenuAction((action) => {
       if (action === 'close-chat' && currentIdRef.current) {
         void closeChat(currentIdRef.current)
