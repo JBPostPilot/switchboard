@@ -37,6 +37,12 @@ export type ThreadItem =
 
 export type PermissionDecision = 'allow' | 'always' | 'deny'
 
+export interface ModelChoice {
+  id: string
+  label: string
+  description?: string
+}
+
 export interface ProjectInfo {
   cwd: string
   branch?: string

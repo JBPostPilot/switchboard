@@ -4,7 +4,7 @@ import type { ChatMeta, ChatEvent, ChatStatus, PermissionDecision, ThreadItem } 
 
 // A push-based async iterable: the SDK consumes it as the session's user-message
 // stream, and we push into it whenever the user hits send.
-class AsyncQueue<T> implements AsyncIterable<T> {
+export class AsyncQueue<T> implements AsyncIterable<T> {
   private items: T[] = []
   private waiters: ((v: IteratorResult<T>) => void)[] = []
   private closed = false

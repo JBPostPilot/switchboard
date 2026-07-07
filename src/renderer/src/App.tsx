@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatMeta, ProjectInfo, ThreadItem } from '../../shared/types'
+import type { ChatMeta, ModelChoice, ProjectInfo, ThreadItem } from '../../shared/types'
 
 const sb = window.switchboard
 
-const MODEL_CHOICES = [
-  { id: '', label: 'Default model' },
+// Shown until the live list from the engine arrives (or if fetching fails).
+const FALLBACK_MODELS: ModelChoice[] = [
   { id: 'opus', label: 'Opus — most capable' },
   { id: 'sonnet', label: 'Sonnet — fast + smart' },
   { id: 'haiku', label: 'Haiku — fastest' }
@@ -56,6 +56,7 @@ export default function App(): React.JSX.Element {
   const [rawMode, setRawMode] = useState(false)
   const [raw, setRaw] = useState<unknown[]>([])
   const [info, setInfo] = useState<ProjectInfo | null>(null)
+  const [models, setModels] = useState<ModelChoice[]>(FALLBACK_MODELS)
   const [draft, setDraft] = useState('')
   const composerRef = useRef<HTMLInputElement>(null)
   const currentIdRef = useRef(currentId)
@@ -68,6 +69,16 @@ export default function App(): React.JSX.Element {
       setChats(list)
       if (list.length > 0) setCurrentId(list[0].id)
     })
+    // Hydrate the model dropdown from what this account can actually use.
+    // Ask twice: once for the (possibly cached) instant answer, then again
+    // shortly after so the background refresh from the engine lands too.
+    const hydrate = (): Promise<void> =>
+      sb.listModels().then((list) => {
+        if (list.length > 0) setModels(list)
+      })
+    void hydrate()
+    const later = setTimeout(() => void hydrate(), 20_000)
+    return () => clearTimeout(later)
   }, [])
 
   useEffect(() => {
@@ -188,6 +199,7 @@ export default function App(): React.JSX.Element {
             items={items}
             raw={raw}
             rawMode={rawMode}
+            models={models}
             draft={draft}
             setDraft={setDraft}
             composerRef={composerRef}
@@ -383,6 +395,7 @@ function ChatPane({
   items,
   raw,
   rawMode,
+  models,
   draft,
   setDraft,
   composerRef,
@@ -395,6 +408,7 @@ function ChatPane({
   items: ThreadItem[]
   raw: unknown[]
   rawMode: boolean
+  models: ModelChoice[]
   draft: string
   setDraft: (v: string) => void
   composerRef: React.RefObject<HTMLInputElement | null>
@@ -432,11 +446,18 @@ function ChatPane({
             value={chat.preferredModel ?? ''}
             onChange={(e) => void sb.setModel(chat.id, e.target.value || undefined)}
           >
-            {MODEL_CHOICES.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.label}
-              </option>
-            ))}
+            {/* The engine's own "default" row becomes our empty-value option. */}
+            <option value="">{models.find((m) => m.id === 'default')?.label ?? 'Default model'}</option>
+            {models
+              .filter((m) => m.id !== 'default')
+              .map((m) => (
+                <option key={m.id} value={m.id} title={m.description}>
+                  {m.label}
+                </option>
+              ))}
+            {chat.preferredModel && !models.some((m) => m.id === chat.preferredModel) && (
+              <option value={chat.preferredModel}>{chat.preferredModel}</option>
+            )}
           </select>
           {chat.status === 'working' && (
             <button className="icon-btn" onClick={onInterrupt} title="Stop what Claude is doing">

@@ -1,5 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { ChatEvent, ChatMeta, PermissionDecision, ProjectInfo, ThreadItem } from '../shared/types'
+import type {
+  ChatEvent,
+  ChatMeta,
+  ModelChoice,
+  PermissionDecision,
+  ProjectInfo,
+  ThreadItem
+} from '../shared/types'
 
 const api = {
   listChats: (): Promise<ChatMeta[]> => ipcRenderer.invoke('chats:list'),
@@ -20,6 +27,7 @@ const api = {
   interrupt: (chatId: string): Promise<void> => ipcRenderer.invoke('chats:interrupt', chatId),
   setModel: (chatId: string, model?: string): Promise<void> =>
     ipcRenderer.invoke('chats:set-model', chatId, model),
+  listModels: (): Promise<ModelChoice[]> => ipcRenderer.invoke('models:list'),
   getItems: (chatId: string): Promise<ThreadItem[]> => ipcRenderer.invoke('chats:items', chatId),
   getRaw: (chatId: string): Promise<unknown[]> => ipcRenderer.invoke('chats:raw', chatId),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),

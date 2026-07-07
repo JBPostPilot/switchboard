@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { ChatSession } from './sessions'
+import { getModels, loadCachedModels, refreshModels } from './models'
 import { getProjectInfo } from './projectInfo'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
 import type { ChatEvent, ChatMeta, PermissionDecision } from '../shared/types'
@@ -124,6 +125,10 @@ function buildMenu(): void {
 app.whenReady().then(() => {
   chats = loadChats()
   buildMenu()
+  loadCachedModels()
+  void refreshModels() // background refresh; dropdown re-hydrates when it lands
+
+  ipcMain.handle('models:list', () => getModels())
 
   ipcMain.handle('chats:list', () => chats)
 
