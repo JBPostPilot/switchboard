@@ -25,6 +25,8 @@ const api = {
     ipcRenderer.invoke('chats:send', chatId, text),
   respondPermission: (chatId: string, decision: PermissionDecision): Promise<void> =>
     ipcRenderer.invoke('chats:permission', chatId, decision),
+  respondQuestion: (chatId: string, answers: Record<string, string> | null): Promise<void> =>
+    ipcRenderer.invoke('chats:answer', chatId, answers),
   interrupt: (chatId: string): Promise<void> => ipcRenderer.invoke('chats:interrupt', chatId),
   setModel: (chatId: string, model?: string): Promise<void> =>
     ipcRenderer.invoke('chats:set-model', chatId, model),

@@ -44,6 +44,22 @@ export type ThreadItem =
     }
   | { kind: 'info'; id: string; text: string; ts: number }
   | { kind: 'error'; id: string; text: string; ts: number }
+  | {
+      kind: 'question'
+      id: string
+      questions: ChatQuestion[]
+      // question text → chosen answer; set once the user responds
+      answers?: Record<string, string>
+      skipped?: boolean
+      ts: number
+    }
+
+export interface ChatQuestion {
+  question: string
+  header: string
+  multiSelect?: boolean
+  options: { label: string; description?: string }[]
+}
 
 export type PermissionDecision = 'allow' | 'always' | 'deny'
 

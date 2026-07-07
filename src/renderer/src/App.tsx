@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import type { ChatMeta, EditorApp, ModelChoice, ProjectInfo, ThreadItem } from '../../shared/types'
+import type {
+  ChatMeta,
+  ChatQuestion,
+  EditorApp,
+  ModelChoice,
+  ProjectInfo,
+  ThreadItem
+} from '../../shared/types'
+
+type QuestionItem = Extract<ThreadItem, { kind: 'question' }>
 
 const sb = window.switchboard
 
@@ -181,6 +190,11 @@ export default function App(): React.JSX.Element {
     [items]
   )
 
+  const pendingQuestion = useMemo(
+    () => items.findLast((i) => i.kind === 'question' && !i.answers && !i.skipped) as QuestionItem | undefined,
+    [items]
+  )
+
   const decide = useCallback(
     (decision: 'allow' | 'always' | 'deny') => {
       if (currentId && pendingAsk) void sb.respondPermission(currentId, decision)
@@ -188,18 +202,33 @@ export default function App(): React.JSX.Element {
     [currentId, pendingAsk]
   )
 
+  const answer = useCallback(
+    (answers: Record<string, string> | null) => {
+      if (currentId && pendingQuestion) void sb.respondQuestion(currentId, answers)
+    },
+    [currentId, pendingQuestion]
+  )
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (!pendingAsk) return
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' && (target as HTMLInputElement).value !== '') return
-      if (e.key === '1') decide('allow')
-      if (e.key === '2') decide('always')
-      if (e.key === '3') decide('deny')
+      if (pendingAsk) {
+        if (e.key === '1') decide('allow')
+        if (e.key === '2') decide('always')
+        if (e.key === '3') decide('deny')
+        return
+      }
+      // Number keys pick an option when Claude asked exactly one single-choice question.
+      if (pendingQuestion && pendingQuestion.questions.length === 1 && !pendingQuestion.questions[0].multiSelect) {
+        const q = pendingQuestion.questions[0]
+        const idx = Number(e.key) - 1
+        if (idx >= 0 && idx < q.options.length) answer({ [q.question]: q.options[idx].label })
+      }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pendingAsk, decide])
+  }, [pendingAsk, pendingQuestion, decide, answer])
 
   return (
     <div className="app">
@@ -224,6 +253,7 @@ export default function App(): React.JSX.Element {
             onToggleRaw={() => setRawMode((v) => !v)}
             onSend={send}
             onDecide={decide}
+            onAnswer={answer}
             onInterrupt={() => void sb.interrupt(current.id)}
           />
           <DetailsPanel
@@ -420,6 +450,7 @@ function ChatPane({
   onToggleRaw,
   onSend,
   onDecide,
+  onAnswer,
   onInterrupt
 }: {
   chat: ChatMeta
@@ -433,6 +464,7 @@ function ChatPane({
   onToggleRaw: () => void
   onSend: (text: string) => void
   onDecide: (d: 'allow' | 'always' | 'deny') => void
+  onAnswer: (a: Record<string, string> | null) => void
   onInterrupt: () => void
 }): React.JSX.Element {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -512,7 +544,7 @@ function ChatPane({
               </p>
             )}
             {items.map((item) => (
-              <ThreadItemView key={item.id} item={item} onDecide={onDecide} />
+              <ThreadItemView key={item.id} item={item} onDecide={onDecide} onAnswer={onAnswer} />
             ))}
             {chat.status === 'working' && (
               <div className="working">
@@ -546,10 +578,12 @@ function ChatPane({
 
 function ThreadItemView({
   item,
-  onDecide
+  onDecide,
+  onAnswer
 }: {
   item: ThreadItem
   onDecide: (d: 'allow' | 'always' | 'deny') => void
+  onAnswer: (a: Record<string, string> | null) => void
 }): React.JSX.Element | null {
   switch (item.kind) {
     case 'user':
@@ -609,6 +643,8 @@ function ThreadItemView({
           )}
         </div>
       )
+    case 'question':
+      return <QuestionCard item={item} onAnswer={onAnswer} />
     case 'info':
       return <div className="thread-info">{item.text}</div>
     case 'error':
@@ -616,6 +652,124 @@ function ThreadItemView({
     default:
       return null
   }
+}
+
+function QuestionCard({
+  item,
+  onAnswer
+}: {
+  item: QuestionItem
+  onAnswer: (a: Record<string, string> | null) => void
+}): React.JSX.Element {
+  // Selections while composing a multi-question / multi-select answer.
+  const [sel, setSel] = useState<Record<string, string[]>>({})
+  const [otherOpen, setOtherOpen] = useState<Record<string, boolean>>({})
+  const [otherText, setOtherText] = useState<Record<string, string>>({})
+
+  const resolved = Boolean(item.answers) || item.skipped
+  // The common case: one question, pick one option → answer on click.
+  const instant = item.questions.length === 1 && !item.questions[0].multiSelect
+
+  const choose = (q: ChatQuestion, label: string): void => {
+    if (instant) {
+      onAnswer({ [q.question]: label })
+      return
+    }
+    setSel((prev) => {
+      const cur = prev[q.question] ?? []
+      const next = q.multiSelect
+        ? cur.includes(label)
+          ? cur.filter((l) => l !== label)
+          : [...cur, label]
+        : [label]
+      return { ...prev, [q.question]: next }
+    })
+  }
+
+  const submitOther = (q: ChatQuestion): void => {
+    const text = (otherText[q.question] ?? '').trim()
+    if (!text) return
+    if (instant) {
+      onAnswer({ [q.question]: text })
+      return
+    }
+    setSel((prev) => ({ ...prev, [q.question]: [text] }))
+    setOtherOpen((prev) => ({ ...prev, [q.question]: false }))
+  }
+
+  const allAnswered = item.questions.every((q) => (sel[q.question]?.length ?? 0) > 0)
+  const submitAll = (): void =>
+    onAnswer(Object.fromEntries(item.questions.map((q) => [q.question, (sel[q.question] ?? []).join(', ')])))
+
+  return (
+    <div className={`ask question ${resolved ? 'resolved' : ''}`}>
+      <div className="ask-title">Claude has a question</div>
+      {item.questions.map((q, qi) => (
+        <div className="q-block" key={q.question}>
+          {q.header && <span className="q-header">{q.header}</span>}
+          <div className="ask-body">{q.question}</div>
+          {resolved ? (
+            <div className="ask-resolved">
+              {item.skipped ? 'You skipped this' : `You chose: ${item.answers?.[q.question] ?? '—'}`}
+            </div>
+          ) : (
+            <div className="q-options">
+              {q.options.map((o, oi) => {
+                const chosen = (sel[q.question] ?? []).includes(o.label)
+                return (
+                  <button
+                    key={o.label}
+                    className={`q-option ${chosen ? 'chosen' : ''}`}
+                    title={o.description}
+                    onClick={() => choose(q, o.label)}
+                  >
+                    {instant && qi === 0 && <kbd>{oi + 1}</kbd>}
+                    <span className="q-option-label">{o.label}</span>
+                    {o.description && <span className="q-option-desc">{o.description}</span>}
+                  </button>
+                )
+              })}
+              {otherOpen[q.question] ? (
+                <div className="q-other-row">
+                  <input
+                    autoFocus
+                    placeholder="Type your own answer…"
+                    value={otherText[q.question] ?? ''}
+                    onChange={(e) => setOtherText((p) => ({ ...p, [q.question]: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') submitOther(q)
+                    }}
+                  />
+                  <button className="btn primary" onClick={() => submitOther(q)}>
+                    {instant ? 'Answer' : 'Set'}
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="q-option other"
+                  onClick={() => setOtherOpen((p) => ({ ...p, [q.question]: true }))}
+                >
+                  <span className="q-option-label">Other…</span>
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      ))}
+      {!resolved && (
+        <div className="ask-actions">
+          {!instant && (
+            <button className="btn primary" disabled={!allAnswered} onClick={submitAll}>
+              Send answers
+            </button>
+          )}
+          <button className="btn quiet" onClick={() => onAnswer(null)}>
+            Skip
+          </button>
+        </div>
+      )}
+    </div>
+  )
 }
 
 function DetailsPanel({

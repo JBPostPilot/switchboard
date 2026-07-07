@@ -46,6 +46,7 @@ export class AsyncQueue<T> implements AsyncIterable<T> {
 }
 
 interface PendingPermission {
+  kind: 'ask' | 'question'
   itemId: string
   resolve: (result: unknown) => void
   input: Record<string, unknown>
@@ -281,6 +282,29 @@ export class ChatSession {
     suggestions: unknown[]
   ): Promise<unknown> {
     const itemId = randomUUID()
+
+    // Claude's multiple-choice questions become tappable option cards; the
+    // chosen answers go back through updatedInput.answers.
+    if (toolName === 'AskUserQuestion' && Array.isArray(input.questions)) {
+      const questions = (input.questions as Record<string, unknown>[]).map((q) => ({
+        question: String(q.question ?? ''),
+        header: String(q.header ?? ''),
+        multiSelect: Boolean(q.multiSelect),
+        options: Array.isArray(q.options)
+          ? (q.options as Record<string, unknown>[]).map((o) => ({
+              label: String(o.label ?? ''),
+              description: o.description ? String(o.description) : undefined
+            }))
+          : []
+      }))
+      this.pushItem({ kind: 'question', id: itemId, questions, ts: Date.now() })
+      const first = questions[0]?.question ?? 'a question'
+      this.setStatus('needs-you', `Claude has a question — ${first}`)
+      return new Promise((resolve) => {
+        this.pending = { kind: 'question', itemId, resolve, input, suggestions }
+      })
+    }
+
     const summary = friendlyToolSummary(toolName, input)
     this.pushItem({
       kind: 'ask',
@@ -293,13 +317,30 @@ export class ChatSession {
     this.setStatus('needs-you', `Waiting on permission — ${summary}`)
 
     return new Promise((resolve) => {
-      this.pending = { itemId, resolve, input, suggestions }
+      this.pending = { kind: 'ask', itemId, resolve, input, suggestions }
     })
+  }
+
+  respondQuestion(answers: Record<string, string> | null): void {
+    const pending = this.pending
+    if (!pending || pending.kind !== 'question') return
+    this.pending = null
+    if (answers) {
+      this.updateItem(pending.itemId, { answers })
+      pending.resolve({ behavior: 'allow', updatedInput: { ...pending.input, answers } })
+    } else {
+      this.updateItem(pending.itemId, { skipped: true })
+      pending.resolve({
+        behavior: 'deny',
+        message: 'The user chose not to answer. Proceed with your best judgment.'
+      })
+    }
+    this.setStatus('working', 'Working…')
   }
 
   respondPermission(decision: PermissionDecision): void {
     const pending = this.pending
-    if (!pending) return
+    if (!pending || pending.kind !== 'ask') return
     this.pending = null
 
     let result: unknown

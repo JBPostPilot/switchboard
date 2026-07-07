@@ -168,6 +168,10 @@ app.whenReady().then(() => {
     getSession(chatId)?.respondPermission(decision)
   })
 
+  ipcMain.handle('chats:answer', (_e, chatId: string, answers: Record<string, string> | null) => {
+    getSession(chatId)?.respondQuestion(answers)
+  })
+
   ipcMain.handle('chats:set-model', (_e, chatId: string, model?: string) => {
     getSession(chatId)?.setPreferredModel(model)
   })
