@@ -286,6 +286,24 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:commands', (_e, chatId: string) => sessions.get(chatId)?.commands ?? [])
 
+  // Every pending approval/question across all chats, newest last — the
+  // renderer's Approvals backlog.
+  ipcMain.handle('backlog:list', () => {
+    const entries = []
+    for (const [chatId, session] of sessions) {
+      const item = session.pendingItem()
+      if (!item) continue
+      entries.push({
+        chatId,
+        chatTitle: session.meta.title,
+        cwd: session.meta.cwd,
+        repoRoot: session.meta.repoRoot,
+        item
+      })
+    }
+    return entries.sort((a, b) => a.item.ts - b.item.ts)
+  })
+
   ipcMain.handle('chats:delete', async (_e, chatId: string) => {
     const meta = chats.find((c) => c.id === chatId)
     if (!meta || !win) return null

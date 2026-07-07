@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
   AuthStatus,
+  BacklogEntry,
   ChatEvent,
   ChatMeta,
   EditorApp,
@@ -49,6 +50,7 @@ const api = {
   getRaw: (chatId: string): Promise<unknown[]> => ipcRenderer.invoke('chats:raw', chatId),
   getCommands: (chatId: string): Promise<SlashCommandInfo[]> =>
     ipcRenderer.invoke('chats:commands', chatId),
+  getBacklog: (): Promise<BacklogEntry[]> => ipcRenderer.invoke('backlog:list'),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),
   revealInFinder: (cwd: string): Promise<void> => ipcRenderer.invoke('project:reveal', cwd),
   listEditors: (): Promise<EditorApp[]> => ipcRenderer.invoke('project:editors'),

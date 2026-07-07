@@ -99,6 +99,16 @@ export interface ProjectInfo {
   mcpServers: string[]
 }
 
+// One pending approval/question, with enough chat identity to act on it
+// without opening the chat.
+export interface BacklogEntry {
+  chatId: string
+  chatTitle: string
+  cwd: string
+  repoRoot?: string
+  item: ThreadItem
+}
+
 // Events pushed from main → renderer.
 export interface ChatEvent {
   chatId: string

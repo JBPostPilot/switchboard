@@ -3,6 +3,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
   AuthStatus,
+  BacklogEntry,
   ChatMeta,
   ChatQuestion,
   EditorApp,
@@ -13,6 +14,7 @@ import type {
 } from '../../shared/types'
 
 type QuestionItem = Extract<ThreadItem, { kind: 'question' }>
+type AskItem = Extract<ThreadItem, { kind: 'ask' }>
 
 const sb = window.switchboard
 
@@ -93,6 +95,9 @@ export default function App(): React.JSX.Element {
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [commands, setCommands] = useState<SlashCommandInfo[]>([])
+  const [backlog, setBacklog] = useState<BacklogEntry[]>([])
+  const [backlogMode, setBacklogMode] = useState(false)
+  const backlogTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [draft, setDraft] = useState('')
   const composerRef = useRef<HTMLInputElement>(null)
   const currentIdRef = useRef(currentId)
@@ -128,8 +133,23 @@ export default function App(): React.JSX.Element {
     return () => clearTimeout(later)
   }, [])
 
+  // The backlog reflects live session state — refresh (debounced) whenever
+  // anything happens in any chat.
+  const refreshBacklog = useCallback(() => {
+    if (backlogTimer.current) return
+    backlogTimer.current = setTimeout(() => {
+      backlogTimer.current = null
+      void sb.getBacklog().then(setBacklog)
+    }, 120)
+  }, [])
+
+  useEffect(() => {
+    void sb.getBacklog().then(setBacklog)
+  }, [])
+
   useEffect(() => {
     return sb.onChatEvent((event) => {
+      refreshBacklog()
       if (event.meta) {
         const meta = event.meta
         setChats((prev) => {
@@ -156,7 +176,7 @@ export default function App(): React.JSX.Element {
         setRaw((prev) => [...prev, entry])
       }
     })
-  }, [])
+  }, [refreshBacklog])
 
   useEffect(() => {
     if (!currentId) return
@@ -256,6 +276,23 @@ export default function App(): React.JSX.Element {
       if (paletteOpen) return // palette owns the keyboard while open
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' && (target as HTMLInputElement).value !== '') return
+      // In the backlog, number keys act on the topmost entry.
+      if (backlogMode) {
+        const top = backlog[0]
+        if (!top) return
+        if (top.item.kind === 'ask') {
+          if (e.key === '1') void sb.respondPermission(top.chatId, 'allow')
+          if (e.key === '2') void sb.respondPermission(top.chatId, 'always')
+          if (e.key === '3') void sb.respondPermission(top.chatId, 'deny')
+        } else if (top.item.kind === 'question' && top.item.questions.length === 1 && !top.item.questions[0].multiSelect) {
+          const q = top.item.questions[0]
+          const idx = Number(e.key) - 1
+          if (idx >= 0 && idx < q.options.length) {
+            void sb.respondQuestion(top.chatId, { [q.question]: q.options[idx].label })
+          }
+        }
+        return
+      }
       if (pendingAsk) {
         if (e.key === '1') decide('allow')
         if (e.key === '2') decide('always')
@@ -271,7 +308,7 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pendingAsk, pendingQuestion, decide, answer, paletteOpen])
+  }, [pendingAsk, pendingQuestion, decide, answer, paletteOpen, backlogMode, backlog])
 
   if (auth === null) {
     return <div className="app drag" />
@@ -284,12 +321,26 @@ export default function App(): React.JSX.Element {
     <div className="app">
       <Sidebar
         chats={chats}
-        currentId={currentId}
-        onSelect={setCurrentId}
+        currentId={backlogMode ? null : currentId}
+        backlogCount={backlog.length}
+        backlogActive={backlogMode}
+        onOpenBacklog={() => setBacklogMode(true)}
+        onSelect={(id) => {
+          setBacklogMode(false)
+          setCurrentId(id)
+        }}
         onCreated={chatCreated}
         onClose={(id) => void closeChat(id)}
       />
-      {current ? (
+      {backlogMode ? (
+        <BacklogPane
+          backlog={backlog}
+          onOpenChat={(id) => {
+            setBacklogMode(false)
+            setCurrentId(id)
+          }}
+        />
+      ) : current ? (
         <>
           <ChatPane
             chat={current}
@@ -483,12 +534,18 @@ function NewChatControl({
 function Sidebar({
   chats,
   currentId,
+  backlogCount,
+  backlogActive,
+  onOpenBacklog,
   onSelect,
   onCreated,
   onClose
 }: {
   chats: ChatMeta[]
   currentId: string | null
+  backlogCount: number
+  backlogActive: boolean
+  onOpenBacklog: () => void
   onSelect: (id: string) => void
   onCreated: (meta: ChatMeta) => void
   onClose: (id: string) => void
@@ -501,6 +558,13 @@ function Sidebar({
         </span>
       </div>
       <div className="rail-list">
+        {backlogCount > 0 && (
+          <button className="approvals-row" aria-current={backlogActive} onClick={onOpenBacklog}>
+            <span className="approvals-icon">⚡</span>
+            <span className="approvals-label">Approvals</span>
+            <span className="approvals-count">{backlogCount}</span>
+          </button>
+        )}
         {STATUS_GROUPS.map((group) => {
           const inGroup = chats
             .filter((c) => group.key.includes(c.status))
@@ -851,38 +915,7 @@ function ThreadItemView({
         </div>
       )
     case 'ask':
-      return (
-        <div className={`ask ${item.resolved ? 'resolved' : ''}`}>
-          <div className="ask-title">{item.title}</div>
-          <div className="ask-body">{item.body}</div>
-          {item.note && (
-            <div className="ask-note">
-              <code>{item.note}</code>
-            </div>
-          )}
-          {item.resolved ? (
-            <div className="ask-resolved">
-              {item.resolved === 'denied'
-                ? 'You said not now'
-                : item.resolved === 'always-allowed'
-                  ? 'Allowed — Claude won’t ask again for this'
-                  : 'Allowed'}
-            </div>
-          ) : (
-            <div className="ask-actions">
-              <button className="btn primary" onClick={() => onDecide('allow')}>
-                <kbd>1</kbd>Allow
-              </button>
-              <button className="btn" onClick={() => onDecide('always')}>
-                <kbd>2</kbd>Always allow this
-              </button>
-              <button className="btn" onClick={() => onDecide('deny')}>
-                <kbd>3</kbd>Not now
-              </button>
-            </div>
-          )}
-        </div>
-      )
+      return <AskCard item={item} onDecide={onDecide} />
     case 'question':
       return <QuestionCard item={item} onAnswer={onAnswer} />
     case 'info':
@@ -892,6 +925,106 @@ function ThreadItemView({
     default:
       return null
   }
+}
+
+function AskCard({
+  item,
+  onDecide
+}: {
+  item: AskItem
+  onDecide: (d: 'allow' | 'always' | 'deny') => void
+}): React.JSX.Element {
+  return (
+    <div className={`ask ${item.resolved ? 'resolved' : ''}`}>
+      <div className="ask-title">{item.title}</div>
+      <div className="ask-body">{item.body}</div>
+      {item.note && (
+        <div className="ask-note">
+          <code>{item.note}</code>
+        </div>
+      )}
+      {item.resolved ? (
+        <div className="ask-resolved">
+          {item.resolved === 'denied'
+            ? 'You said not now'
+            : item.resolved === 'always-allowed'
+              ? 'Allowed — Claude won’t ask again for this'
+              : 'Allowed'}
+        </div>
+      ) : (
+        <div className="ask-actions">
+          <button className="btn primary" onClick={() => onDecide('allow')}>
+            <kbd>1</kbd>Allow
+          </button>
+          <button className="btn" onClick={() => onDecide('always')}>
+            <kbd>2</kbd>Always allow this
+          </button>
+          <button className="btn" onClick={() => onDecide('deny')}>
+            <kbd>3</kbd>Not now
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function BacklogPane({
+  backlog,
+  onOpenChat
+}: {
+  backlog: BacklogEntry[]
+  onOpenChat: (chatId: string) => void
+}): React.JSX.Element {
+  return (
+    <section className="chat backlog">
+      <div className="chat-head drag">
+        <span className="approvals-icon big">⚡</span>
+        <div>
+          <div className="chat-head-name">Approvals</div>
+          <div className="chat-head-sub sans">
+            {backlog.length === 0
+              ? 'Nothing waiting on you'
+              : `${backlog.length} waiting — number keys act on the top one`}
+          </div>
+        </div>
+      </div>
+      <div className="backlog-scroll">
+        <div className="backlog-inner">
+          {backlog.length === 0 && (
+            <div className="backlog-empty">
+              <div className="backlog-check">✓</div>
+              <p>All caught up.</p>
+            </div>
+          )}
+          {backlog.map((entry) => (
+            <div className="backlog-entry" key={entry.item.id}>
+              <button
+                className="backlog-chat"
+                title="Open this chat"
+                onClick={() => onOpenChat(entry.chatId)}
+              >
+                <ProjectAvatar cwd={entry.cwd} hueKey={entry.repoRoot} />
+                <span className="backlog-chat-title">{entry.chatTitle}</span>
+                <span className="backlog-chat-path">{shortPath(entry.cwd)}</span>
+              </button>
+              {entry.item.kind === 'ask' && (
+                <AskCard
+                  item={entry.item}
+                  onDecide={(d) => void sb.respondPermission(entry.chatId, d)}
+                />
+              )}
+              {entry.item.kind === 'question' && (
+                <QuestionCard
+                  item={entry.item}
+                  onAnswer={(a) => void sb.respondQuestion(entry.chatId, a)}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  )
 }
 
 function QuestionCard({

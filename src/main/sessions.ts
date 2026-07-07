@@ -354,6 +354,11 @@ export class ChatSession {
     })
   }
 
+  pendingItem(): ThreadItem | undefined {
+    if (!this.pending) return undefined
+    return this.items.find((i) => i.id === this.pending?.itemId)
+  }
+
   respondQuestion(answers: Record<string, string> | null): void {
     const pending = this.pending
     if (!pending || pending.kind !== 'question') return
