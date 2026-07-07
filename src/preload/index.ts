@@ -15,6 +15,7 @@ const api = {
   createChat: (opts?: { newProjectName?: string }): Promise<ChatMeta | null> =>
     ipcRenderer.invoke('chats:create', opts),
   getProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:root'),
+  chooseProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:choose-root'),
   deleteChat: (chatId: string): Promise<ChatMeta[] | null> =>
     ipcRenderer.invoke('chats:delete', chatId),
   onOpenChat: (callback: (chatId: string) => void): (() => void) => {

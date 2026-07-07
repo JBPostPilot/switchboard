@@ -434,7 +434,13 @@ function NewChatControl({
             </div>
             {root && (
               <span className="newchat-option-desc">
-                Makes a new folder in {root.replace(/^\/Users\/[^/]+/, '~')}
+                Makes a new folder in {shortPath(root)}{' '}
+                <button
+                  className="newchat-change"
+                  onClick={() => void sb.chooseProjectsRoot().then(setRoot)}
+                >
+                  Change…
+                </button>
               </span>
             )}
           </div>

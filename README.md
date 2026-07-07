@@ -46,14 +46,11 @@ npm run dist       # package a .dmg (electron-builder)
 
 ## Roadmap
 
-- [ ] Streaming text (SDK `includePartialMessages`) instead of per-message rendering
-- [ ] ⌘K jump-to-chat palette searching names, folders, and what each chat is about
-- [ ] macOS notifications when a chat needs your reply; click to jump
-- [ ] Questions from Claude (AskUserQuestion) rendered as tappable option cards
-- [ ] Restore full history when resuming (parse the session JSONL transcript)
-- [ ] Worktree-aware grouping for chats in the same repo
-- [ ] Permission-mode switch per chat (`setPermissionMode`)
-- [ ] Configurable projects root (where "Create a new project" puts folders)
+- [ ] Adopt existing terminal sessions (`claude --resume` list → chats)
+- [ ] Reopen recently closed chats from their transcripts
+- [ ] Attach images/files to messages
+- [ ] Render option previews in question cards (code snippets, mockups)
+- [ ] Refresh the model list when the dropdown opens (not just at launch)
 
 ## License
 

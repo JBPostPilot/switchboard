@@ -69,10 +69,33 @@ function getSession(chatId: string): ChatSession | undefined {
   return session
 }
 
+// App settings (currently just the projects root) live in userData.
+interface Settings {
+  projectsRoot?: string
+}
+
+function settingsPath(): string {
+  return path.join(app.getPath('userData'), 'settings.json')
+}
+
+function loadSettings(): Settings {
+  try {
+    return JSON.parse(fs.readFileSync(settingsPath(), 'utf8')) as Settings
+  } catch {
+    return {}
+  }
+}
+
+function saveSettings(settings: Settings): void {
+  fs.writeFileSync(settingsPath(), JSON.stringify(settings, null, 2))
+}
+
 // Where brand-new projects are created, and where the folder picker starts.
-// First existing conventional dev directory wins; ~/Projects is created as a
-// fallback if none exist.
+// The user's saved choice wins; otherwise the first existing conventional dev
+// directory, with ~/Projects created as a last resort.
 function projectsRoot(): string {
+  const saved = loadSettings().projectsRoot
+  if (saved && fs.existsSync(saved)) return saved
   const home = app.getPath('home')
   const candidates = ['Documents/Development', 'Development', 'Projects', 'code', 'dev'].map((p) =>
     path.join(home, p)
@@ -180,6 +203,19 @@ app.whenReady().then(() => {
   ipcMain.handle('chats:list', () => chats)
 
   ipcMain.handle('projects:root', () => projectsRoot())
+
+  ipcMain.handle('projects:choose-root', async () => {
+    if (!win) return projectsRoot()
+    const picked = await dialog.showOpenDialog(win, {
+      title: 'Where should new projects be created?',
+      defaultPath: projectsRoot(),
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (!picked.canceled && picked.filePaths.length > 0) {
+      saveSettings({ ...loadSettings(), projectsRoot: picked.filePaths[0] })
+    }
+    return projectsRoot()
+  })
 
   ipcMain.handle('chats:create', async (_e, opts?: { newProjectName?: string }) => {
     let cwd: string
