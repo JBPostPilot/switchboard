@@ -20,6 +20,10 @@ export interface ChatMeta {
   // Live MCP connections reported by the running session (includes claude.ai
   // connectors, which exist only account-side and are invisible on disk).
   mcp?: McpServer[]
+  // Root of the git repo this folder belongs to (the *main* checkout for
+  // worktrees) — chats in the same repo share an avatar color.
+  repoRoot?: string
+  isWorktree?: boolean
   createdAt: number
   updatedAt: number
 }

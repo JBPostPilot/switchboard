@@ -312,6 +312,15 @@ code {
   color: var(--muted);
   font-family: var(--mono);
 }
+.wt-badge {
+  margin-left: 8px;
+  font-family: var(--sans);
+  font-size: 11px;
+  color: var(--faint);
+  background: var(--panel-2);
+  border-radius: 99px;
+  padding: 1px 8px;
+}
 .head-actions {
   margin-left: auto;
   display: flex;

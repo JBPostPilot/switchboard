@@ -21,6 +21,23 @@ function listSkills(dir: string, source: string): { name: string; source: string
   }
 }
 
+// Repo identity: worktrees of the same repo share a common git dir, so the
+// common dir's parent is the stable identity for "same project".
+export async function getRepoIdentity(
+  cwd: string
+): Promise<{ repoRoot?: string; isWorktree: boolean }> {
+  try {
+    const [{ stdout: common }, { stdout: gitDir }] = await Promise.all([
+      execFileAsync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], { cwd }),
+      execFileAsync('git', ['rev-parse', '--path-format=absolute', '--git-dir'], { cwd })
+    ])
+    const repoRoot = path.dirname(common.trim())
+    return { repoRoot, isWorktree: common.trim() !== gitDir.trim() }
+  } catch {
+    return { isWorktree: false }
+  }
+}
+
 export async function getProjectInfo(cwd: string): Promise<ProjectInfo> {
   let branch: string | undefined
   try {

@@ -5,7 +5,7 @@ import path from 'node:path'
 import { ChatSession } from './sessions'
 import { listEditors, openInEditor } from './editors'
 import { getModels, loadCachedModels, refreshModels } from './models'
-import { getProjectInfo } from './projectInfo'
+import { getProjectInfo, getRepoIdentity } from './projectInfo'
 import { loadTranscriptItems } from './transcript'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
 import type { ChatEvent, ChatMeta, PermissionDecision, PermissionModeChoice } from '../shared/types'
@@ -165,6 +165,16 @@ app.whenReady().then(() => {
   loadCachedModels()
   void refreshModels() // background refresh; dropdown re-hydrates when it lands
 
+  // Backfill repo identity for chats created before it existed.
+  for (const meta of chats.filter((c) => c.repoRoot === undefined && !c.isWorktree)) {
+    void getRepoIdentity(meta.cwd).then((identity) => {
+      meta.repoRoot = identity.repoRoot ?? meta.cwd
+      meta.isWorktree = identity.isWorktree
+      persistAll()
+      broadcast({ chatId: meta.id, meta: { ...meta } })
+    })
+  }
+
   ipcMain.handle('models:list', () => getModels())
 
   ipcMain.handle('chats:list', () => chats)
@@ -189,6 +199,9 @@ app.whenReady().then(() => {
       cwd = picked.filePaths[0]
     }
     const meta = createChatMeta(cwd)
+    const identity = await getRepoIdentity(cwd)
+    meta.repoRoot = identity.repoRoot
+    meta.isWorktree = identity.isWorktree
     chats.unshift(meta)
     persistAll()
     return meta

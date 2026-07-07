@@ -53,10 +53,13 @@ function projectHue(cwd: string): number {
   return h
 }
 
-function ProjectAvatar({ cwd }: { cwd: string }): React.JSX.Element {
+function ProjectAvatar({ cwd, hueKey }: { cwd: string; hueKey?: string }): React.JSX.Element {
   const name = cwd.split('/').filter(Boolean).pop() ?? '?'
   return (
-    <span className="avatar project" style={{ '--hue': projectHue(cwd) } as React.CSSProperties}>
+    <span
+      className="avatar project"
+      style={{ '--hue': projectHue(hueKey ?? cwd) } as React.CSSProperties}
+    >
       {name.slice(0, 1).toUpperCase()}
     </span>
   )
@@ -482,7 +485,7 @@ function Sidebar({
                     if (e.key === 'Enter') onSelect(c.id)
                   }}
                 >
-                  <ProjectAvatar cwd={c.cwd} />
+                  <ProjectAvatar cwd={c.cwd} hueKey={c.repoRoot} />
                   <span className="chat-name">{c.title}</span>
                   <span className="chat-time">{timeAgo(c.updatedAt)}</span>
                   <span className={`chat-preview ${c.status === 'needs-you' || c.status === 'error' ? 'attn' : c.status === 'working' ? 'work' : ''}`}>
@@ -570,10 +573,17 @@ function ChatPane({
   return (
     <section className="chat">
       <div className="chat-head drag">
-        <ProjectAvatar cwd={chat.cwd} />
+        <ProjectAvatar cwd={chat.cwd} hueKey={chat.repoRoot} />
         <div>
           <div className="chat-head-name">{chat.title}</div>
-          <div className="chat-head-sub">{shortPath(chat.cwd)}</div>
+          <div className="chat-head-sub">
+            {shortPath(chat.cwd)}
+            {chat.isWorktree && chat.repoRoot && (
+              <span className="wt-badge" title="A separate working copy — changes here can’t collide with other chats in this repo">
+                ⑂ copy of {chat.repoRoot.split('/').pop()}
+              </span>
+            )}
+          </div>
         </div>
         <div className="head-actions no-drag">
           <select
