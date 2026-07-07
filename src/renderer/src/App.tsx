@@ -439,8 +439,12 @@ function ChatPane({
 
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [items.length, chat.status, rawMode])
+    if (!el) return
+    // Follow the bottom while streaming, but don't yank the view if the user
+    // has scrolled up to read something earlier.
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (nearBottom) el.scrollTop = el.scrollHeight
+  }, [items, chat.status, rawMode])
 
   const submit = (): void => {
     const text = draft.trim()

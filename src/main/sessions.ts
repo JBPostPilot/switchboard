@@ -104,7 +104,7 @@ export class ChatSession {
         cwd: this.meta.cwd,
         model: this.meta.preferredModel,
         permissionMode: 'default',
-        includePartialMessages: false,
+        includePartialMessages: true,
         // Behave like a normal `claude` session in this folder: load the
         // user's + project's settings, CLAUDE.md, skills, and MCP servers.
         settingSources: ['user', 'project', 'local'],
@@ -134,11 +134,21 @@ export class ChatSession {
     }
   }
 
+  // Streaming state: content-block index → thread item id for the assistant
+  // message currently being generated. Reset at each message_start.
+  private streamItems = new Map<number, string>()
+  private streamEmitTimers = new Map<string, NodeJS.Timeout>()
+
   private handleMessage(message: Record<string, unknown>): void {
+    const type = message.type as string
+
+    if (type === 'stream_event') {
+      this.handleStreamEvent(message)
+      return // too chatty for the raw log
+    }
+
     this.rawLog.push(message)
     this.emit({ chatId: this.meta.id, raw: message })
-
-    const type = message.type as string
 
     if (type === 'system' && message.subtype === 'init') {
       if (typeof message.session_id === 'string') this.meta.sessionId = message.session_id
@@ -152,10 +162,24 @@ export class ChatSession {
 
     if (type === 'assistant') {
       const inner = message.message as { content?: unknown[] } | undefined
+      // Text blocks that streamed in already have items — finalize those with
+      // the authoritative full text instead of pushing duplicates.
+      const streamedIds =
+        message.parent_tool_use_id == null
+          ? [...this.streamItems.entries()].sort((a, b) => a[0] - b[0]).map(([, id]) => id)
+          : []
+      this.streamItems.clear()
       for (const block of inner?.content ?? []) {
         const b = block as Record<string, unknown>
         if (b.type === 'text' && typeof b.text === 'string' && b.text.trim()) {
-          this.pushItem({ kind: 'claude', id: randomUUID(), text: b.text, ts: Date.now() })
+          const streamedId = streamedIds.shift()
+          if (streamedId) {
+            const item = this.items.find((i) => i.id === streamedId)
+            if (item && item.kind === 'claude') item.text = b.text
+            this.emit({ chatId: this.meta.id, updateItem: { id: streamedId, patch: { text: b.text } } })
+          } else {
+            this.pushItem({ kind: 'claude', id: randomUUID(), text: b.text, ts: Date.now() })
+          }
           this.meta.preview = b.text.slice(0, 90)
         } else if (b.type === 'tool_use') {
           const tool = String(b.name ?? 'tool')
@@ -191,6 +215,49 @@ export class ChatSession {
       this.setStatus('idle', this.meta.preview || 'Ready when you are')
       void this.refreshMcp() // statuses can change mid-chat (e.g. after auth)
       return
+    }
+  }
+
+  private handleStreamEvent(message: Record<string, unknown>): void {
+    if (message.parent_tool_use_id != null) return // subagent activity; not rendered inline
+    const event = message.event as Record<string, unknown> | undefined
+    if (!event) return
+
+    if (event.type === 'message_start') {
+      this.streamItems.clear()
+      return
+    }
+
+    if (event.type === 'content_block_start') {
+      const block = event.content_block as Record<string, unknown> | undefined
+      if (block?.type === 'text') {
+        const item: ThreadItem = { kind: 'claude', id: randomUUID(), text: '', ts: Date.now() }
+        this.items.push(item)
+        this.streamItems.set(Number(event.index ?? 0), item.id)
+        this.emit({ chatId: this.meta.id, item })
+      }
+      return
+    }
+
+    if (event.type === 'content_block_delta') {
+      const delta = event.delta as Record<string, unknown> | undefined
+      if (delta?.type !== 'text_delta' || typeof delta.text !== 'string') return
+      const itemId = this.streamItems.get(Number(event.index ?? 0))
+      if (!itemId) return
+      const item = this.items.find((i) => i.id === itemId)
+      if (!item || item.kind !== 'claude') return
+      item.text += delta.text
+      // Throttle renderer updates to ~30fps per item; final text lands with
+      // the complete assistant message, so a trailing tick isn't critical.
+      if (!this.streamEmitTimers.has(itemId)) {
+        this.streamEmitTimers.set(
+          itemId,
+          setTimeout(() => {
+            this.streamEmitTimers.delete(itemId)
+            this.emit({ chatId: this.meta.id, updateItem: { id: itemId, patch: { text: item.text } } })
+          }, 33)
+        )
+      }
     }
   }
 
