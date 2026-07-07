@@ -67,7 +67,7 @@ const TOOL_LABELS: Record<string, string> = {
   TodoWrite: 'Update the plan'
 }
 
-function friendlyToolSummary(tool: string, input: Record<string, unknown>): string {
+export function friendlyToolSummary(tool: string, input: Record<string, unknown>): string {
   const label = TOOL_LABELS[tool] ?? tool
   const target =
     (input.file_path as string) ??

@@ -6,6 +6,7 @@ import { ChatSession } from './sessions'
 import { listEditors, openInEditor } from './editors'
 import { getModels, loadCachedModels, refreshModels } from './models'
 import { getProjectInfo } from './projectInfo'
+import { loadTranscriptItems } from './transcript'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
 import type { ChatEvent, ChatMeta, PermissionDecision, PermissionModeChoice } from '../shared/types'
 
@@ -46,6 +47,14 @@ function persistAll(): void {
   saveChats(chats)
 }
 
+// Local history first; if there is none but the chat has an engine session,
+// rebuild the visible history from that session's transcript.
+function itemsFor(meta: ChatMeta): ReturnType<typeof loadItems> {
+  const items = loadItems(meta.id)
+  if (items.length > 0 || !meta.sessionId) return items
+  return loadTranscriptItems(meta.cwd, meta.sessionId)
+}
+
 function getSession(chatId: string): ChatSession | undefined {
   const existing = sessions.get(chatId)
   if (existing) return existing
@@ -55,7 +64,7 @@ function getSession(chatId: string): ChatSession | undefined {
     persistAll()
     saveItems(chatId, session.items)
   })
-  session.items = loadItems(chatId)
+  session.items = itemsFor(meta)
   sessions.set(chatId, session)
   return session
 }
@@ -211,7 +220,9 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:items', (_e, chatId: string) => {
     const session = sessions.get(chatId)
-    return session ? session.items : loadItems(chatId)
+    if (session) return session.items
+    const meta = chats.find((c) => c.id === chatId)
+    return meta ? itemsFor(meta) : []
   })
 
   ipcMain.handle('chats:raw', (_e, chatId: string) => sessions.get(chatId)?.rawLog ?? [])
