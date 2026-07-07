@@ -8,6 +8,7 @@ import type {
   PermissionDecision,
   PermissionModeChoice,
   ProjectInfo,
+  SlashCommandInfo,
   ThreadItem
 } from '../shared/types'
 
@@ -46,6 +47,8 @@ const api = {
     ipcRenderer.invoke('chats:set-permission-mode', chatId, mode),
   getItems: (chatId: string): Promise<ThreadItem[]> => ipcRenderer.invoke('chats:items', chatId),
   getRaw: (chatId: string): Promise<unknown[]> => ipcRenderer.invoke('chats:raw', chatId),
+  getCommands: (chatId: string): Promise<SlashCommandInfo[]> =>
+    ipcRenderer.invoke('chats:commands', chatId),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),
   revealInFinder: (cwd: string): Promise<void> => ipcRenderer.invoke('project:reveal', cwd),
   listEditors: (): Promise<EditorApp[]> => ipcRenderer.invoke('project:editors'),

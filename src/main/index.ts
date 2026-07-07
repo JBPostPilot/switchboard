@@ -284,6 +284,8 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:raw', (_e, chatId: string) => sessions.get(chatId)?.rawLog ?? [])
 
+  ipcMain.handle('chats:commands', (_e, chatId: string) => sessions.get(chatId)?.commands ?? [])
+
   ipcMain.handle('chats:delete', async (_e, chatId: string) => {
     const meta = chats.find((c) => c.id === chatId)
     if (!meta || !win) return null

@@ -9,6 +9,7 @@ import type {
   McpServer,
   PermissionDecision,
   PermissionModeChoice,
+  SlashCommandInfo,
   ThreadItem
 } from '../shared/types'
 
@@ -87,6 +88,7 @@ export class ChatSession {
   meta: ChatMeta
   items: ThreadItem[] = []
   rawLog: unknown[] = []
+  commands: SlashCommandInfo[] = []
   private queue = new AsyncQueue<unknown>()
   private q: ReturnType<typeof query> | null = null
   private pending: PendingPermission | null = null
@@ -162,6 +164,14 @@ export class ChatSession {
       // MCP servers (including claude.ai connectors) connect asynchronously
       // after init — give them a moment, then report real statuses.
       setTimeout(() => void this.refreshMcp(), 4000)
+      void this.refreshCommands()
+      return
+    }
+
+    // The engine pushes a fresh command list when it changes mid-session
+    // (e.g. skills discovered while working); replace, don't re-fetch.
+    if (type === 'system' && message.subtype === 'commands_changed' && Array.isArray(message.commands)) {
+      this.setCommands(message.commands as Record<string, unknown>[])
       return
     }
 
@@ -263,6 +273,25 @@ export class ChatSession {
           }, 33)
         )
       }
+    }
+  }
+
+  private setCommands(commands: Record<string, unknown>[]): void {
+    this.commands = commands.map((c) => ({
+      name: String(c.name ?? ''),
+      description: String(c.description ?? ''),
+      argumentHint: String(c.argumentHint ?? '')
+    }))
+    this.emit({ chatId: this.meta.id, commands: this.commands })
+  }
+
+  private async refreshCommands(): Promise<void> {
+    const q = this.q as { supportedCommands?: () => Promise<Record<string, unknown>[]> } | null
+    if (!q?.supportedCommands) return
+    try {
+      this.setCommands(await q.supportedCommands())
+    } catch {
+      // between turns or shutting down — keep the last known list
     }
   }
 

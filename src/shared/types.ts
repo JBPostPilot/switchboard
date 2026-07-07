@@ -70,6 +70,12 @@ export type PermissionDecision = 'allow' | 'always' | 'deny'
 
 export type PermissionModeChoice = 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'
 
+export interface SlashCommandInfo {
+  name: string
+  description: string
+  argumentHint: string
+}
+
 export interface ModelChoice {
   id: string
   label: string
@@ -99,5 +105,6 @@ export interface ChatEvent {
   meta?: ChatMeta
   item?: ThreadItem
   updateItem?: { id: string; patch: Partial<ThreadItem> }
+  commands?: SlashCommandInfo[]
   raw?: unknown
 }

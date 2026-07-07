@@ -8,6 +8,7 @@ import type {
   EditorApp,
   ModelChoice,
   ProjectInfo,
+  SlashCommandInfo,
   ThreadItem
 } from '../../shared/types'
 
@@ -22,10 +23,11 @@ const FALLBACK_MODELS: ModelChoice[] = [
   { id: 'haiku', label: 'Haiku — fastest' }
 ]
 
-const HANDY_COMMANDS = [
-  { cmd: '/init', desc: 'Teach Claude this project — writes project notes it reads every chat' },
-  { cmd: '/compact', desc: 'Tidy a long chat so Claude stays sharp' },
-  { cmd: '/review', desc: 'Review a pull request' }
+// Shown until the live command list arrives from the chat's engine session.
+const FALLBACK_COMMANDS: SlashCommandInfo[] = [
+  { name: 'init', description: 'Teach Claude this project — writes project notes', argumentHint: '' },
+  { name: 'compact', description: 'Tidy a long chat so Claude stays sharp', argumentHint: '' },
+  { name: 'review', description: 'Review a pull request', argumentHint: '<pr number or url>' }
 ]
 
 function Markdown({ text }: { text: string }): React.JSX.Element {
@@ -90,6 +92,7 @@ export default function App(): React.JSX.Element {
   const [models, setModels] = useState<ModelChoice[]>(FALLBACK_MODELS)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [auth, setAuth] = useState<AuthStatus | null>(null)
+  const [commands, setCommands] = useState<SlashCommandInfo[]>([])
   const [draft, setDraft] = useState('')
   const composerRef = useRef<HTMLInputElement>(null)
   const currentIdRef = useRef(currentId)
@@ -145,6 +148,9 @@ export default function App(): React.JSX.Element {
         const { id, patch } = event.updateItem
         setItems((prev) => prev.map((i) => (i.id === id ? ({ ...i, ...patch } as ThreadItem) : i)))
       }
+      if (event.commands) {
+        setCommands(event.commands)
+      }
       if (event.raw) {
         const entry = event.raw
         setRaw((prev) => [...prev, entry])
@@ -158,8 +164,12 @@ export default function App(): React.JSX.Element {
     setRaw([])
     setRawMode(false)
     setDraft('')
+    setCommands([])
     void sb.getItems(currentId).then(setItems)
     void sb.getRaw(currentId).then(setRaw)
+    void sb.getCommands(currentId).then((list) => {
+      if (list.length > 0) setCommands(list)
+    })
   }, [currentId])
 
   useEffect(() => {
@@ -237,6 +247,12 @@ export default function App(): React.JSX.Element {
         setPaletteOpen((v) => !v)
         return
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') {
+        e.preventDefault()
+        setDraft('/')
+        composerRef.current?.focus()
+        return
+      }
       if (paletteOpen) return // palette owns the keyboard while open
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' && (target as HTMLInputElement).value !== '') return
@@ -281,6 +297,7 @@ export default function App(): React.JSX.Element {
             raw={raw}
             rawMode={rawMode}
             models={models}
+            commands={commands.length > 0 ? commands : FALLBACK_COMMANDS}
             draft={draft}
             setDraft={setDraft}
             composerRef={composerRef}
@@ -290,14 +307,7 @@ export default function App(): React.JSX.Element {
             onAnswer={answer}
             onInterrupt={() => void sb.interrupt(current.id)}
           />
-          <DetailsPanel
-            chat={current}
-            info={info}
-            onUseCommand={(cmd) => {
-              setDraft(cmd + ' ')
-              composerRef.current?.focus()
-            }}
-          />
+          <DetailsPanel chat={current} info={info} />
         </>
       ) : (
         <EmptyState onCreated={chatCreated} />
@@ -555,6 +565,7 @@ function ChatPane({
   raw,
   rawMode,
   models,
+  commands,
   draft,
   setDraft,
   composerRef,
@@ -569,6 +580,7 @@ function ChatPane({
   raw: unknown[]
   rawMode: boolean
   models: ModelChoice[]
+  commands: SlashCommandInfo[]
   draft: string
   setDraft: (v: string) => void
   composerRef: React.RefObject<HTMLInputElement | null>
@@ -594,6 +606,81 @@ function ChatPane({
     if (!text) return
     onSend(text)
     setDraft('')
+  }
+
+  // Command popover: opens while the draft is a bare "/command" prefix (no
+  // space yet), Esc dismisses until the slash is deleted.
+  const [cmdDismissed, setCmdDismissed] = useState(false)
+  const [cmdSel, setCmdSel] = useState(0)
+  const cmdFilter = draft.startsWith('/') && !draft.includes(' ') ? draft.slice(1).toLowerCase() : null
+  const cmdOpen = cmdFilter !== null && !cmdDismissed
+
+  const cmdHits = useMemo(() => {
+    if (!cmdOpen || cmdFilter === null) return []
+    return commands
+      .filter(
+        (c) =>
+          c.name.toLowerCase().includes(cmdFilter) ||
+          c.description.toLowerCase().includes(cmdFilter)
+      )
+      .sort(
+        (a, b) =>
+          Number(b.name.toLowerCase().startsWith(cmdFilter)) -
+          Number(a.name.toLowerCase().startsWith(cmdFilter))
+      )
+      .slice(0, 10)
+  }, [cmdOpen, cmdFilter, commands])
+
+  useEffect(() => setCmdSel(0), [cmdFilter])
+  useEffect(() => {
+    if (!draft.startsWith('/')) setCmdDismissed(false)
+  }, [draft])
+
+  const pickCommand = (c: SlashCommandInfo): void => {
+    setDraft(`/${c.name} `)
+    composerRef.current?.focus()
+  }
+
+  // Syntax helper: once a command is chosen/typed, show its expected arguments.
+  const activeCommand = useMemo(() => {
+    if (!draft.startsWith('/')) return undefined
+    const typed = draft.slice(1).split(' ')[0].toLowerCase()
+    return commands.find((c) => c.name.toLowerCase() === typed)
+  }, [draft, commands])
+
+  const composerKeyDown = (e: React.KeyboardEvent): void => {
+    if (cmdOpen && cmdHits.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setCmdSel((s) => Math.min(s + 1, cmdHits.length - 1))
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setCmdSel((s) => Math.max(s - 1, 0))
+        return
+      }
+      if (e.key === 'Escape') {
+        setCmdDismissed(true)
+        return
+      }
+      if (e.key === 'Tab') {
+        e.preventDefault()
+        pickCommand(cmdHits[cmdSel])
+        return
+      }
+      if (e.key === 'Enter') {
+        const chosen = cmdHits[cmdSel]
+        // Enter on the exactly-typed command runs it; otherwise it completes.
+        if (chosen.name.toLowerCase() === cmdFilter) submit()
+        else {
+          e.preventDefault()
+          pickCommand(chosen)
+        }
+        return
+      }
+    }
+    if (e.key === 'Enter') submit()
   }
 
   return (
@@ -675,15 +762,50 @@ function ChatPane({
       )}
 
       <div className="composer">
+        {cmdOpen && cmdHits.length > 0 && (
+          <div className="cmd-pop" role="listbox" aria-label="Commands">
+            {cmdHits.map((c, i) => (
+              <button
+                key={c.name}
+                className={`cmd-row ${i === cmdSel ? 'selected' : ''}`}
+                role="option"
+                aria-selected={i === cmdSel}
+                onMouseEnter={() => setCmdSel(i)}
+                onClick={() => pickCommand(c)}
+              >
+                <span className="cmd-name">/{c.name}</span>
+                {c.argumentHint && <span className="cmd-hint">{c.argumentHint}</span>}
+                <span className="cmd-desc">{c.description}</span>
+              </button>
+            ))}
+          </div>
+        )}
+        {activeCommand?.argumentHint && !cmdOpen && (
+          <div className="cmd-helper">
+            <span className="cmd-name">/{activeCommand.name}</span>
+            <span className="cmd-hint">{activeCommand.argumentHint}</span>
+            <span className="cmd-desc">{activeCommand.description}</span>
+          </div>
+        )}
         <div className="composer-inner">
+          <button
+            className="slash-btn"
+            title="Commands (⌘/)"
+            aria-label="Show commands"
+            onClick={() => {
+              setDraft('/')
+              setCmdDismissed(false)
+              composerRef.current?.focus()
+            }}
+          >
+            /
+          </button>
           <input
             ref={composerRef}
             value={draft}
             placeholder={items.length === 0 ? 'What would you like Claude to do?' : 'Reply to Claude…'}
             onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submit()
-            }}
+            onKeyDown={composerKeyDown}
           />
           <button className="send" aria-label="Send" onClick={submit}>
             ↑
@@ -890,15 +1012,7 @@ function QuestionCard({
   )
 }
 
-function DetailsPanel({
-  chat,
-  info,
-  onUseCommand
-}: {
-  chat: ChatMeta
-  info: ProjectInfo | null
-  onUseCommand: (cmd: string) => void
-}): React.JSX.Element {
+function DetailsPanel({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null }): React.JSX.Element {
   const [editors, setEditors] = useState<EditorApp[]>([])
 
   useEffect(() => {
@@ -988,17 +1102,6 @@ function DetailsPanel({
             No shortcuts yet — ask Claude to create one for anything you do often in this project.
           </p>
         )}
-      </div>
-      <div className="d-section">
-        <h3>Handy commands</h3>
-        <div className="cmd-list">
-          {HANDY_COMMANDS.map((c) => (
-            <button className="cmd" key={c.cmd} onClick={() => onUseCommand(c.cmd)}>
-              <span className="slash">{c.cmd}</span>
-              <span className="cmd-desc">{c.desc}</span>
-            </button>
-          ))}
-        </div>
       </div>
       <ConnectedApps chat={chat} info={info} />
     </aside>
