@@ -170,6 +170,24 @@ code {
   border-radius: 99px;
   padding: 1px 7px;
 }
+/* Caught-up state: present but quiet. */
+.approvals-row.empty {
+  background: transparent;
+}
+.approvals-row.empty:hover {
+  background: var(--panel-2);
+}
+.approvals-row.empty .approvals-label {
+  color: var(--muted);
+  font-weight: 550;
+}
+.approvals-row.empty .approvals-icon {
+  opacity: 0.55;
+}
+.approvals-clear {
+  font-size: 12px;
+  color: var(--work);
+}
 
 .rail-group-label {
   font-size: 11px;

@@ -558,13 +558,19 @@ function Sidebar({
         </span>
       </div>
       <div className="rail-list">
-        {backlogCount > 0 && (
-          <button className="approvals-row" aria-current={backlogActive} onClick={onOpenBacklog}>
-            <span className="approvals-icon">⚡</span>
-            <span className="approvals-label">Approvals</span>
+        <button
+          className={`approvals-row ${backlogCount === 0 ? 'empty' : ''}`}
+          aria-current={backlogActive}
+          onClick={onOpenBacklog}
+        >
+          <span className="approvals-icon">⚡</span>
+          <span className="approvals-label">Approvals</span>
+          {backlogCount > 0 ? (
             <span className="approvals-count">{backlogCount}</span>
-          </button>
-        )}
+          ) : (
+            <span className="approvals-clear">✓</span>
+          )}
+        </button>
         {STATUS_GROUPS.map((group) => {
           const inGroup = chats
             .filter((c) => group.key.includes(c.status))
