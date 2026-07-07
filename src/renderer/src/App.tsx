@@ -84,6 +84,7 @@ export default function App(): React.JSX.Element {
   const [raw, setRaw] = useState<unknown[]>([])
   const [info, setInfo] = useState<ProjectInfo | null>(null)
   const [models, setModels] = useState<ModelChoice[]>(FALLBACK_MODELS)
+  const [paletteOpen, setPaletteOpen] = useState(false)
   const [draft, setDraft] = useState('')
   const composerRef = useRef<HTMLInputElement>(null)
   const currentIdRef = useRef(currentId)
@@ -215,6 +216,12 @@ export default function App(): React.JSX.Element {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((v) => !v)
+        return
+      }
+      if (paletteOpen) return // palette owns the keyboard while open
       const target = e.target as HTMLElement
       if (target.tagName === 'INPUT' && (target as HTMLInputElement).value !== '') return
       if (pendingAsk) {
@@ -232,7 +239,7 @@ export default function App(): React.JSX.Element {
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [pendingAsk, pendingQuestion, decide, answer])
+  }, [pendingAsk, pendingQuestion, decide, answer, paletteOpen])
 
   return (
     <div className="app">
@@ -272,6 +279,77 @@ export default function App(): React.JSX.Element {
       ) : (
         <EmptyState onCreated={chatCreated} />
       )}
+      {paletteOpen && (
+        <Palette
+          chats={chats}
+          onPick={(id) => {
+            setCurrentId(id)
+            setPaletteOpen(false)
+          }}
+          onClose={() => setPaletteOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function Palette({
+  chats,
+  onPick,
+  onClose
+}: {
+  chats: ChatMeta[]
+  onPick: (id: string) => void
+  onClose: () => void
+}): React.JSX.Element {
+  const [q, setQ] = useState('')
+  const [sel, setSel] = useState(0)
+
+  const hits = useMemo(() => {
+    const needle = q.trim().toLowerCase()
+    const sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt)
+    if (!needle) return sorted
+    return sorted.filter((c) =>
+      `${c.title} ${c.cwd} ${c.preview} ${c.statusLine}`.toLowerCase().includes(needle)
+    )
+  }, [chats, q])
+
+  useEffect(() => setSel(0), [q])
+
+  return (
+    <div className="palette-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="palette" role="dialog" aria-label="Jump to chat">
+        <input
+          autoFocus
+          value={q}
+          placeholder="Jump to a chat — name, folder, or what it’s about…"
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') onClose()
+            if (e.key === 'ArrowDown') setSel((s) => Math.min(s + 1, hits.length - 1))
+            if (e.key === 'ArrowUp') setSel((s) => Math.max(s - 1, 0))
+            if (e.key === 'Enter' && hits[sel]) onPick(hits[sel].id)
+          }}
+        />
+        <div className="palette-results">
+          {hits.length === 0 && <div className="palette-empty">No chat matches “{q}”.</div>}
+          {hits.map((c, i) => (
+            <button
+              key={c.id}
+              className={`palette-row ${i === sel ? 'selected' : ''}`}
+              onMouseEnter={() => setSel(i)}
+              onClick={() => onPick(c.id)}
+            >
+              <span
+                className={`palette-dot ${c.status === 'needs-you' || c.status === 'error' ? 'attn' : c.status === 'working' ? 'work' : ''}`}
+              />
+              <span className="palette-title">{c.title}</span>
+              <span className="palette-path">{shortPath(c.cwd)}</span>
+              <span className="palette-preview">{c.statusLine || c.preview}</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
