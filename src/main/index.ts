@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -92,8 +92,38 @@ function createWindow(): void {
   }
 }
 
+// ⌘W closes the current chat (not the window) — the Mac-native way to
+// "close one of the terminal windows". The window itself is ⌘⇧W.
+function buildMenu(): void {
+  const menu = Menu.buildFromTemplate([
+    { role: 'appMenu' },
+    {
+      label: 'File',
+      submenu: [
+        {
+          label: 'New Chat…',
+          accelerator: 'CmdOrCtrl+N',
+          click: () => win?.webContents.send('menu:action', 'new-chat')
+        },
+        {
+          label: 'Close Chat',
+          accelerator: 'CmdOrCtrl+W',
+          click: () => win?.webContents.send('menu:action', 'close-chat')
+        },
+        { type: 'separator' },
+        { role: 'close', label: 'Close Window', accelerator: 'CmdOrCtrl+Shift+W' }
+      ]
+    },
+    { role: 'editMenu' },
+    { role: 'viewMenu' },
+    { role: 'windowMenu' }
+  ])
+  Menu.setApplicationMenu(menu)
+}
+
 app.whenReady().then(() => {
   chats = loadChats()
+  buildMenu()
 
   ipcMain.handle('chats:list', () => chats)
 
@@ -145,9 +175,25 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:raw', (_e, chatId: string) => sessions.get(chatId)?.rawLog ?? [])
 
-  ipcMain.handle('chats:delete', (_e, chatId: string) => {
-    sessions.get(chatId)?.dispose()
-    sessions.delete(chatId)
+  ipcMain.handle('chats:delete', async (_e, chatId: string) => {
+    const meta = chats.find((c) => c.id === chatId)
+    if (!meta || !win) return null
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'question',
+      buttons: ['Close Chat', 'Cancel'],
+      defaultId: 0,
+      cancelId: 1,
+      message: `Close “${meta.title}”?`,
+      detail:
+        'This stops anything in progress and removes the chat from Switchboard. Files in the project folder are not touched.'
+    })
+    if (response !== 0) return null
+    const session = sessions.get(chatId)
+    if (session) {
+      await session.interrupt()
+      session.dispose()
+      sessions.delete(chatId)
+    }
     chats = chats.filter((c) => c.id !== chatId)
     deleteItems(chatId)
     persistAll()

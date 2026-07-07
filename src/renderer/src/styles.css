@@ -138,6 +138,7 @@ code {
   color: var(--accent);
 }
 .chat-item {
+  position: relative;
   width: 100%;
   text-align: left;
   border-radius: 12px;
@@ -147,6 +148,30 @@ code {
   column-gap: 10px;
   row-gap: 1px;
   align-items: center;
+  cursor: pointer;
+}
+.chat-close {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  width: 20px;
+  height: 20px;
+  border-radius: 6px;
+  display: none;
+  place-items: center;
+  font-size: 11px;
+  color: var(--faint);
+  background: var(--panel-2);
+}
+.chat-item:hover .chat-close {
+  display: grid;
+}
+.chat-close:hover {
+  color: var(--text);
+  background: var(--line);
+}
+.chat-item:hover .chat-time {
+  visibility: hidden;
 }
 .chat-item + .chat-item {
   margin-top: 1px;

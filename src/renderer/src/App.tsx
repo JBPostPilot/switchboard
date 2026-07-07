@@ -120,6 +120,26 @@ export default function App(): React.JSX.Element {
     setCurrentId(meta.id)
   }, [])
 
+  const closeChat = useCallback(async (chatId: string) => {
+    const remaining = await sb.deleteChat(chatId) // null = user cancelled
+    if (!remaining) return
+    setChats(remaining)
+    setCurrentId((prev) => (prev === chatId ? (remaining[0]?.id ?? null) : prev))
+  }, [])
+
+  useEffect(() => {
+    return sb.onMenuAction((action) => {
+      if (action === 'close-chat' && currentIdRef.current) {
+        void closeChat(currentIdRef.current)
+      }
+      if (action === 'new-chat') {
+        void sb.createChat().then((meta) => {
+          if (meta) chatCreated(meta)
+        })
+      }
+    })
+  }, [closeChat, chatCreated])
+
   const send = useCallback(
     (text: string) => {
       if (currentId) void sb.sendMessage(currentId, text)
@@ -154,7 +174,13 @@ export default function App(): React.JSX.Element {
 
   return (
     <div className="app">
-      <Sidebar chats={chats} currentId={currentId} onSelect={setCurrentId} onCreated={chatCreated} />
+      <Sidebar
+        chats={chats}
+        currentId={currentId}
+        onSelect={setCurrentId}
+        onCreated={chatCreated}
+        onClose={(id) => void closeChat(id)}
+      />
       {current ? (
         <>
           <ChatPane
@@ -277,12 +303,14 @@ function Sidebar({
   chats,
   currentId,
   onSelect,
-  onCreated
+  onCreated,
+  onClose
 }: {
   chats: ChatMeta[]
   currentId: string | null
   onSelect: (id: string) => void
   onCreated: (meta: ChatMeta) => void
+  onClose: (id: string) => void
 }): React.JSX.Element {
   return (
     <aside className="rail">
@@ -301,11 +329,16 @@ function Sidebar({
             <div key={group.label}>
               <div className={`rail-group-label ${group.cls}`}>{group.label}</div>
               {inGroup.map((c) => (
-                <button
+                <div
                   key={c.id}
                   className="chat-item"
+                  role="button"
+                  tabIndex={0}
                   aria-current={c.id === currentId}
                   onClick={() => onSelect(c.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') onSelect(c.id)
+                  }}
                 >
                   <span className="avatar">{c.title === 'New chat' ? '＋' : c.title.slice(0, 1).toUpperCase()}</span>
                   <span className="chat-name">{c.title}</span>
@@ -315,7 +348,18 @@ function Sidebar({
                   </span>
                   {c.status === 'needs-you' && <span className="badge" />}
                   {c.status === 'working' && <span className="badge work" />}
-                </button>
+                  <button
+                    className="chat-close"
+                    title="Close this chat (⌘W)"
+                    aria-label={`Close ${c.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onClose(c.id)
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
               ))}
             </div>
           )

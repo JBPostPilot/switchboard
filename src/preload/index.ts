@@ -6,7 +6,13 @@ const api = {
   createChat: (opts?: { newProjectName?: string }): Promise<ChatMeta | null> =>
     ipcRenderer.invoke('chats:create', opts),
   getProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:root'),
-  deleteChat: (chatId: string): Promise<ChatMeta[]> => ipcRenderer.invoke('chats:delete', chatId),
+  deleteChat: (chatId: string): Promise<ChatMeta[] | null> =>
+    ipcRenderer.invoke('chats:delete', chatId),
+  onMenuAction: (callback: (action: string) => void): (() => void) => {
+    const listener = (_e: unknown, action: string): void => callback(action)
+    ipcRenderer.on('menu:action', listener)
+    return () => ipcRenderer.removeListener('menu:action', listener)
+  },
   sendMessage: (chatId: string, text: string): Promise<void> =>
     ipcRenderer.invoke('chats:send', chatId, text),
   respondPermission: (chatId: string, decision: PermissionDecision): Promise<void> =>
