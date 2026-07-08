@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Children, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
@@ -32,12 +32,50 @@ const FALLBACK_COMMANDS: SlashCommandInfo[] = [
   { name: 'review', description: 'Review a pull request', argumentHint: '<pr number or url>' }
 ]
 
+// Full URLs plus bare dev-server addresses (localhost:5173, 127.0.0.1:3000/…)
+// that markdown autolinking misses.
+const URL_RE =
+  /(https?:\/\/[^\s<>()"'`]+|(?:localhost|127\.0\.0\.1|0\.0\.0\.0):\d{2,5}(?:\/[^\s<>()"'`]*)?)/g
+
+function linkifyText(text: string): React.ReactNode {
+  const parts = text.split(URL_RE)
+  if (parts.length === 1) return text
+  return parts.map((part, i) => {
+    if (i % 2 === 0) return part
+    // Trailing sentence punctuation isn't part of the URL.
+    let url = part
+    let trail = ''
+    while (/[.,;:!?]$/.test(url)) {
+      trail = url.slice(-1) + trail
+      url = url.slice(0, -1)
+    }
+    const href = url.startsWith('http') ? url : `http://${url}`
+    return (
+      <span key={i}>
+        <a href={href} target="_blank" rel="noreferrer">
+          {url}
+        </a>
+        {trail}
+      </span>
+    )
+  })
+}
+
+function linkifyNodes(children: React.ReactNode): React.ReactNode {
+  return Children.map(children, (child) => (typeof child === 'string' ? linkifyText(child) : child))
+}
+
 function Markdown({ text }: { text: string }): React.JSX.Element {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        a: (props) => <a {...props} target="_blank" rel="noreferrer" />
+        a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
+        p: ({ node: _node, children, ...props }) => <p {...props}>{linkifyNodes(children)}</p>,
+        li: ({ node: _node, children, ...props }) => <li {...props}>{linkifyNodes(children)}</li>,
+        code: ({ node: _node, children, ...props }) => (
+          <code {...props}>{linkifyNodes(children)}</code>
+        )
       }}
     >
       {text}
@@ -899,7 +937,7 @@ function ThreadItemView({
     case 'user':
       return (
         <div className="msg-user">
-          <div className="bubble">{item.text}</div>
+          <div className="bubble">{linkifyText(item.text)}</div>
         </div>
       )
     case 'claude':

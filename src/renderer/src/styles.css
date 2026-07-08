@@ -624,6 +624,16 @@ code {
 .markdown a:hover {
   text-decoration: underline;
 }
+.markdown code a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg-user .bubble a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .markdown hr {
   border: 0;
   border-top: 1px solid var(--line-soft);
