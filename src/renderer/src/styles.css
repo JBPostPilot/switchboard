@@ -1120,18 +1120,102 @@ code {
   color: var(--faint);
   margin-top: 8px;
 }
-.perm-row {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 12px;
+/* ---- permission-mode switcher (chat header) ---- */
+.mode-wrap {
+  -webkit-app-region: no-drag;
+  position: relative;
 }
-.perm-label {
-  font-size: 11.5px;
+.mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel-2);
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: 12.5px;
+  padding: 5px 10px;
+}
+.mode-btn:hover {
+  color: var(--text);
+}
+.mode-caret {
+  font-size: 9px;
   color: var(--faint);
 }
-.perm-select {
+.mode-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.mode-dot.default {
+  background: var(--accent);
+}
+.mode-dot.acceptEdits {
+  background: var(--work);
+}
+.mode-dot.plan {
+  background: var(--faint);
+}
+.mode-dot.bypassPermissions {
+  background: var(--err);
+}
+.mode-pop {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 300px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.18);
+  padding: 6px;
+  z-index: 20;
+}
+.mode-pop-title {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 7px 10px 4px;
+}
+.mode-option {
   width: 100%;
+  display: grid;
+  grid-template-columns: 14px 1fr;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
+  text-align: left;
+  border-radius: 9px;
+  padding: 8px 10px;
+}
+.mode-option:hover {
+  background: var(--panel-2);
+}
+.mode-option[aria-current='true'] {
+  background: var(--accent-dim);
+}
+.mode-option .mode-dot {
+  justify-self: center;
+}
+.mode-option-label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.mode-rec {
+  color: var(--faint);
+  font-weight: 500;
+  font-size: 11.5px;
+}
+.mode-option-desc {
+  grid-column: 2;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.mode-option.danger .mode-option-label {
+  color: var(--err);
 }
 .chips {
   display: flex;

@@ -8,6 +8,7 @@ import type {
   ChatQuestion,
   EditorApp,
   ModelChoice,
+  PermissionModeChoice,
   ProjectInfo,
   SearchHit,
   SlashCommandInfo,
@@ -24,6 +25,35 @@ const FALLBACK_MODELS: ModelChoice[] = [
   { id: 'opus', label: 'Opus — most capable' },
   { id: 'sonnet', label: 'Sonnet — fast + smart' },
   { id: 'haiku', label: 'Haiku — fastest' }
+]
+
+const MODE_CHOICES: {
+  id: PermissionModeChoice
+  label: string
+  desc: string
+  danger?: boolean
+}[] = [
+  {
+    id: 'default',
+    label: 'Ask first',
+    desc: 'Claude checks with you before changing files or running commands.'
+  },
+  {
+    id: 'acceptEdits',
+    label: 'Auto-edits',
+    desc: 'File edits happen without asking. Commands still check with you.'
+  },
+  {
+    id: 'plan',
+    label: 'Plan first',
+    desc: 'Read-only: Claude proposes a plan and changes nothing until you approve.'
+  },
+  {
+    id: 'bypassPermissions',
+    label: 'Full auto',
+    desc: 'Never asks. Best for experiments where mistakes are easy to undo.',
+    danger: true
+  }
 ]
 
 // Shown until the live command list arrives from the chat's engine session.
@@ -860,6 +890,7 @@ function ChatPane({
           </div>
         </div>
         <div className="head-actions no-drag">
+          <ModeSwitcher chat={chat} />
           <select
             className="model-select"
             title="Which Claude model this chat uses"
@@ -974,6 +1005,66 @@ function ChatPane({
         </div>
       </div>
     </section>
+  )
+}
+
+function ModeSwitcher({ chat }: { chat: ChatMeta }): React.JSX.Element {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const current =
+    MODE_CHOICES.find((m) => m.id === (chat.permissionMode ?? 'default')) ?? MODE_CHOICES[0]
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    window.addEventListener('mousedown', onDown)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', onDown)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return (
+    <div className="mode-wrap" ref={wrapRef}>
+      <button
+        className="mode-btn"
+        title="How much Claude checks with you before acting"
+        onClick={() => setOpen((v) => !v)}
+      >
+        <span className={`mode-dot ${current.id}`} />
+        {current.label}
+        <span className="mode-caret">▾</span>
+      </button>
+      {open && (
+        <div className="mode-pop" role="menu">
+          <div className="mode-pop-title">When Claude acts</div>
+          {MODE_CHOICES.map((m) => (
+            <button
+              key={m.id}
+              className={`mode-option ${m.danger ? 'danger' : ''}`}
+              aria-current={m.id === current.id}
+              onClick={() => {
+                void sb.setPermissionMode(chat.id, m.id)
+                setOpen(false)
+              }}
+            >
+              <span className={`mode-dot ${m.id}`} />
+              <span className="mode-option-label">
+                {m.label}
+                {m.id === 'default' && <span className="mode-rec"> · recommended</span>}
+              </span>
+              <span className="mode-option-desc">{m.desc}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1275,24 +1366,6 @@ function DetailsPanel({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null
             </>
           )}
         </dl>
-        <div className="perm-row">
-          <label className="perm-label" htmlFor="perm-mode">
-            When Claude acts
-          </label>
-          <select
-            id="perm-mode"
-            className="model-select perm-select"
-            value={chat.permissionMode ?? 'default'}
-            onChange={(e) =>
-              void sb.setPermissionMode(chat.id, e.target.value as Parameters<typeof sb.setPermissionMode>[1])
-            }
-          >
-            <option value="default">Ask before acting</option>
-            <option value="acceptEdits">Auto-accept file edits</option>
-            <option value="plan">Plan first — read-only</option>
-            <option value="bypassPermissions">Never ask (full auto)</option>
-          </select>
-        </div>
         <div className="open-row">
           <button
             className="open-btn"
