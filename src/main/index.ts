@@ -286,6 +286,37 @@ app.whenReady().then(() => {
 
   ipcMain.handle('chats:commands', (_e, chatId: string) => sessions.get(chatId)?.commands ?? [])
 
+  // Full-text search across every chat's conversation history — newest
+  // matching message per chat, with a snippet around the match.
+  ipcMain.handle('chats:search', (_e, query: string) => {
+    const q = query.trim().toLowerCase()
+    if (q.length < 2) return []
+    const results: { chatId: string; snippet: string; ts: number }[] = []
+    for (const meta of chats) {
+      const items = sessions.get(meta.id)?.items ?? loadItems(meta.id)
+      for (let i = items.length - 1; i >= 0; i--) {
+        const item = items[i]
+        const text =
+          item.kind === 'user' || item.kind === 'claude'
+            ? item.text
+            : item.kind === 'step'
+              ? item.summary
+              : ''
+        const idx = text.toLowerCase().indexOf(q)
+        if (idx < 0) continue
+        const start = Math.max(0, idx - 30)
+        const end = Math.min(text.length, idx + q.length + 60)
+        const snippet =
+          (start > 0 ? '…' : '') +
+          text.slice(start, end).replace(/\s+/g, ' ').trim() +
+          (end < text.length ? '…' : '')
+        results.push({ chatId: meta.id, snippet, ts: item.ts })
+        break // one hit per chat is enough to find the thread
+      }
+    }
+    return results.sort((a, b) => b.ts - a.ts).slice(0, 12)
+  })
+
   // Every pending approval/question across all chats, newest last — the
   // renderer's Approvals backlog.
   ipcMain.handle('backlog:list', () => {

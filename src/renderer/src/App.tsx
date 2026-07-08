@@ -9,6 +9,7 @@ import type {
   EditorApp,
   ModelChoice,
   ProjectInfo,
+  SearchHit,
   SlashCommandInfo,
   ThreadItem
 } from '../../shared/types'
@@ -362,6 +363,7 @@ export default function App(): React.JSX.Element {
         currentId={backlogMode ? null : currentId}
         backlogCount={backlog.length}
         backlogActive={backlogMode}
+        onOpenPalette={() => setPaletteOpen(true)}
         onOpenBacklog={() => setBacklogMode(true)}
         onSelect={(id) => {
           setBacklogMode(false)
@@ -426,8 +428,9 @@ function Palette({
 }): React.JSX.Element {
   const [q, setQ] = useState('')
   const [sel, setSel] = useState(0)
+  const [contentHits, setContentHits] = useState<SearchHit[]>([])
 
-  const hits = useMemo(() => {
+  const metaHits = useMemo(() => {
     const needle = q.trim().toLowerCase()
     const sorted = [...chats].sort((a, b) => b.updatedAt - a.updatedAt)
     if (!needle) return sorted
@@ -436,7 +439,35 @@ function Palette({
     )
   }, [chats, q])
 
+  // Full-text search inside conversations, debounced; chats already matched
+  // by name/folder aren't repeated.
+  useEffect(() => {
+    const needle = q.trim()
+    if (needle.length < 2) {
+      setContentHits([])
+      return
+    }
+    const timer = setTimeout(() => void sb.searchChats(needle).then(setContentHits), 150)
+    return () => clearTimeout(timer)
+  }, [q])
+
+  const contentRows = useMemo(() => {
+    const seen = new Set(metaHits.map((c) => c.id))
+    return contentHits
+      .filter((h) => !seen.has(h.chatId))
+      .map((h) => ({ hit: h, meta: chats.find((c) => c.id === h.chatId) }))
+      .filter((r): r is { hit: SearchHit; meta: ChatMeta } => Boolean(r.meta))
+  }, [contentHits, metaHits, chats])
+
+  const total = metaHits.length + contentRows.length
+  const hits = metaHits // rows 0..metaHits-1 are meta; the rest are content
+
   useEffect(() => setSel(0), [q])
+
+  const pickAt = (i: number): void => {
+    if (i < metaHits.length) onPick(metaHits[i].id)
+    else if (contentRows[i - metaHits.length]) onPick(contentRows[i - metaHits.length].meta.id)
+  }
 
   return (
     <div className="palette-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -448,13 +479,13 @@ function Palette({
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') onClose()
-            if (e.key === 'ArrowDown') setSel((s) => Math.min(s + 1, hits.length - 1))
+            if (e.key === 'ArrowDown') setSel((s) => Math.min(s + 1, total - 1))
             if (e.key === 'ArrowUp') setSel((s) => Math.max(s - 1, 0))
-            if (e.key === 'Enter' && hits[sel]) onPick(hits[sel].id)
+            if (e.key === 'Enter') pickAt(sel)
           }}
         />
         <div className="palette-results">
-          {hits.length === 0 && <div className="palette-empty">No chat matches “{q}”.</div>}
+          {total === 0 && <div className="palette-empty">No chat matches “{q}”.</div>}
           {hits.map((c, i) => (
             <button
               key={c.id}
@@ -470,6 +501,23 @@ function Palette({
               <span className="palette-preview">{c.statusLine || c.preview}</span>
             </button>
           ))}
+          {contentRows.length > 0 && <div className="palette-section">In conversations</div>}
+          {contentRows.map(({ hit, meta }, j) => {
+            const i = metaHits.length + j
+            return (
+              <button
+                key={hit.chatId}
+                className={`palette-row ${i === sel ? 'selected' : ''}`}
+                onMouseEnter={() => setSel(i)}
+                onClick={() => onPick(meta.id)}
+              >
+                <span className="palette-dot" />
+                <span className="palette-title">{meta.title}</span>
+                <span className="palette-path">{shortPath(meta.cwd)}</span>
+                <span className="palette-preview snippet">“{hit.snippet}”</span>
+              </button>
+            )
+          })}
         </div>
       </div>
     </div>
@@ -574,6 +622,7 @@ function Sidebar({
   currentId,
   backlogCount,
   backlogActive,
+  onOpenPalette,
   onOpenBacklog,
   onSelect,
   onCreated,
@@ -583,6 +632,7 @@ function Sidebar({
   currentId: string | null
   backlogCount: number
   backlogActive: boolean
+  onOpenPalette: () => void
   onOpenBacklog: () => void
   onSelect: (id: string) => void
   onCreated: (meta: ChatMeta) => void
@@ -594,6 +644,9 @@ function Sidebar({
         <span className="wordmark">
           <span className="spark">✳</span> Switchboard
         </span>
+        <button className="search-hint" title="Search chats and conversations" onClick={onOpenPalette}>
+          Search <kbd>⌘K</kbd>
+        </button>
       </div>
       <div className="rail-list">
         <button

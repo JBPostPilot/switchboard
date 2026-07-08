@@ -110,8 +110,24 @@ code {
 .rail-top {
   display: flex;
   align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 16px 16px 8px 78px; /* room for traffic lights */
   min-height: 48px;
+}
+.search-hint {
+  background: var(--panel-2);
+  border-radius: 9px;
+  color: var(--faint);
+  font-size: 11.5px;
+  padding: 4px 9px;
+}
+.search-hint:hover {
+  color: var(--muted);
+}
+.search-hint kbd {
+  font-family: inherit;
+  color: var(--muted);
 }
 .wordmark {
   font-weight: 700;
@@ -1326,6 +1342,18 @@ code {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.palette-preview.snippet {
+  font-style: italic;
+  color: var(--faint);
+}
+.palette-section {
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--faint);
+  padding: 10px 10px 4px;
 }
 
 /* ---- onboarding ---- */

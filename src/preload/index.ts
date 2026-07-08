@@ -9,6 +9,7 @@ import type {
   PermissionDecision,
   PermissionModeChoice,
   ProjectInfo,
+  SearchHit,
   SlashCommandInfo,
   ThreadItem
 } from '../shared/types'
@@ -51,6 +52,7 @@ const api = {
   getCommands: (chatId: string): Promise<SlashCommandInfo[]> =>
     ipcRenderer.invoke('chats:commands', chatId),
   getBacklog: (): Promise<BacklogEntry[]> => ipcRenderer.invoke('backlog:list'),
+  searchChats: (query: string): Promise<SearchHit[]> => ipcRenderer.invoke('chats:search', query),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),
   revealInFinder: (cwd: string): Promise<void> => ipcRenderer.invoke('project:reveal', cwd),
   listEditors: (): Promise<EditorApp[]> => ipcRenderer.invoke('project:editors'),

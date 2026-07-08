@@ -99,6 +99,13 @@ export interface ProjectInfo {
   mcpServers: string[]
 }
 
+// A full-text match inside a chat's conversation history.
+export interface SearchHit {
+  chatId: string
+  snippet: string
+  ts: number
+}
+
 // One pending approval/question, with enough chat identity to act on it
 // without opening the chat.
 export interface BacklogEntry {
