@@ -274,6 +274,12 @@ export default function App(): React.JSX.Element {
     setCurrentId(meta.id)
   }, [])
 
+  // Optimistic per-chat patch so model/mode changes reflect instantly on the
+  // right chat, independent of the main→renderer meta round-trip.
+  const patchChat = useCallback((id: string, patch: Partial<ChatMeta>) => {
+    setChats((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)))
+  }, [])
+
   const closeChat = useCallback(async (chatId: string) => {
     const remaining = await sb.deleteChat(chatId) // null = user cancelled
     if (!remaining) return
@@ -419,6 +425,7 @@ export default function App(): React.JSX.Element {
             rawMode={rawMode}
             models={models}
             commands={commands.length > 0 ? commands : FALLBACK_COMMANDS}
+            onPatchChat={patchChat}
             draft={draft}
             setDraft={setDraft}
             composerRef={composerRef}
@@ -757,6 +764,7 @@ function ChatPane({
   rawMode,
   models,
   commands,
+  onPatchChat,
   draft,
   setDraft,
   composerRef,
@@ -772,6 +780,7 @@ function ChatPane({
   rawMode: boolean
   models: ModelChoice[]
   commands: SlashCommandInfo[]
+  onPatchChat: (id: string, patch: Partial<ChatMeta>) => void
   draft: string
   setDraft: (v: string) => void
   composerRef: React.RefObject<HTMLInputElement | null>
@@ -890,12 +899,16 @@ function ChatPane({
           </div>
         </div>
         <div className="head-actions no-drag">
-          <ModeSwitcher chat={chat} />
+          <ModeSwitcher chat={chat} onPatchChat={onPatchChat} />
           <select
             className="model-select"
             title="Which Claude model this chat uses"
             value={chat.preferredModel ?? ''}
-            onChange={(e) => void sb.setModel(chat.id, e.target.value || undefined)}
+            onChange={(e) => {
+              const model = e.target.value || undefined
+              onPatchChat(chat.id, { preferredModel: model })
+              void sb.setModel(chat.id, model)
+            }}
           >
             {/* The engine's own "default" row becomes our empty-value option. */}
             <option value="">{models.find((m) => m.id === 'default')?.label ?? 'Default model'}</option>
@@ -1008,7 +1021,13 @@ function ChatPane({
   )
 }
 
-function ModeSwitcher({ chat }: { chat: ChatMeta }): React.JSX.Element {
+function ModeSwitcher({
+  chat,
+  onPatchChat
+}: {
+  chat: ChatMeta
+  onPatchChat: (id: string, patch: Partial<ChatMeta>) => void
+}): React.JSX.Element {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef<HTMLDivElement>(null)
   const current =
@@ -1050,6 +1069,7 @@ function ModeSwitcher({ chat }: { chat: ChatMeta }): React.JSX.Element {
               className={`mode-option ${m.danger ? 'danger' : ''}`}
               aria-current={m.id === current.id}
               onClick={() => {
+                onPatchChat(chat.id, { permissionMode: m.id })
                 void sb.setPermissionMode(chat.id, m.id)
                 setOpen(false)
               }}

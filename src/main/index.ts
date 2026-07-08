@@ -263,12 +263,28 @@ app.whenReady().then(() => {
     getSession(chatId)?.respondQuestion(answers)
   })
 
+  // Model/mode are per-chat preferences. Persist them on the chat's meta by
+  // id and live-apply to a running session — but do NOT spin up a throwaway
+  // session just to record a preference (getSession would have, which both
+  // wasted a subprocess and muddied which meta was being written).
+  const patchChatMeta = (chatId: string, patch: Partial<ChatMeta>): void => {
+    const meta = chats.find((c) => c.id === chatId)
+    if (!meta) return
+    Object.assign(meta, patch)
+    persistAll()
+    broadcast({ chatId, meta: { ...meta } })
+  }
+
   ipcMain.handle('chats:set-model', (_e, chatId: string, model?: string) => {
-    getSession(chatId)?.setPreferredModel(model)
+    const session = sessions.get(chatId)
+    if (session) session.setPreferredModel(model)
+    else patchChatMeta(chatId, { preferredModel: model || undefined })
   })
 
   ipcMain.handle('chats:set-permission-mode', (_e, chatId: string, mode: PermissionModeChoice) => {
-    getSession(chatId)?.setPermissionModePref(mode)
+    const session = sessions.get(chatId)
+    if (session) session.setPermissionModePref(mode)
+    else patchChatMeta(chatId, { permissionMode: mode })
   })
 
   ipcMain.handle('chats:interrupt', async (_e, chatId: string) => {
