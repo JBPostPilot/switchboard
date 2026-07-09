@@ -17,6 +17,11 @@
     "react-markdown": "^10.1.0",
     "remark-gfm": "^4.0.1"
   },
+  "overrides": {
+    "@electron/get": "^5.0.0",
+    "@electron/asar": "^4.2.0",
+    "rimraf": "^6.1.3"
+  },
   "devDependencies": {
     "@types/node": "^26.1.0",
     "@types/react": "^19.0.0",
