@@ -1,7 +1,9 @@
-import { Children, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Children, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type {
+  Attachment,
   AuthStatus,
   BacklogEntry,
   ChatMeta,
@@ -12,10 +14,22 @@ import type {
   ProjectInfo,
   SearchHit,
   SlashCommandInfo,
-  ThreadItem
+  TaskEntry,
+  ThreadItem,
+  UserProfile
 } from '../../shared/types'
 
+// Anthropic's image content blocks accept base64 payloads up to a few MB;
+// keep individual attachments well under that.
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+
+// A paste bigger than either bound collapses to a "[Pasted text …]" chip rather
+// than flooding the composer — mirroring the terminal's paste affordance.
+const PASTE_LINE_THRESHOLD = 6
+const PASTE_CHAR_THRESHOLD = 4000
+
 type QuestionItem = Extract<ThreadItem, { kind: 'question' }>
+type AgentItem = Extract<ThreadItem, { kind: 'agent' }>
 type AskItem = Extract<ThreadItem, { kind: 'ask' }>
 
 const sb = window.switchboard
@@ -96,7 +110,149 @@ function linkifyNodes(children: React.ReactNode): React.ReactNode {
   return Children.map(children, (child) => (typeof child === 'string' ? linkifyText(child) : child))
 }
 
-function Markdown({ text }: { text: string }): React.JSX.Element {
+// Flatten a React children tree back to its plain text — used to read the
+// contents of an inline `code` span so we can tell if it names a file.
+function nodeText(children: React.ReactNode): string {
+  let out = ''
+  Children.forEach(children, (c) => {
+    if (typeof c === 'string' || typeof c === 'number') out += String(c)
+    else if (c && typeof c === 'object' && 'props' in c) {
+      out += nodeText((c as { props: { children?: React.ReactNode } }).props.children)
+    }
+  })
+  return out
+}
+
+// File extensions common enough in a coding project that a bare `name.ext`
+// (no slash) is worth treating as a file. A path separator is enough on its
+// own; this list keeps `array.map` or `shell.openPath` from looking like files.
+const OPENABLE_EXT = new Set([
+  'ts', 'tsx', 'js', 'jsx', 'mjs', 'cjs', 'json', 'jsonc', 'md', 'mdx', 'css', 'scss', 'less',
+  'html', 'htm', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift', 'c', 'h', 'cc', 'cpp', 'hpp',
+  'cs', 'php', 'vue', 'svelte', 'sh', 'bash', 'zsh', 'yml', 'yaml', 'toml', 'ini', 'cfg', 'env',
+  'txt', 'sql', 'xml', 'svg', 'png', 'jpg', 'jpeg', 'gif', 'webp', 'pdf', 'lock'
+])
+
+function looksLikeFilePath(s: string): boolean {
+  const t = s.trim()
+  if (!t || t.length > 200 || /\s/.test(t)) return false
+  if (t.includes('/')) return true
+  const dot = t.lastIndexOf('.')
+  if (dot <= 0) return false
+  return OPENABLE_EXT.has(t.slice(dot + 1).toLowerCase())
+}
+
+// A referenced file rendered as a click target: opens a small "Open With"
+// menu (system-default open, detected apps, Reveal in Finder). The main
+// process resolves `path` against the chat folder and refuses anything
+// outside it, so an unresolvable reference simply does nothing.
+function FileLink({
+  path,
+  cwd,
+  children
+}: {
+  path: string
+  cwd: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  // anchor = the button's screen rect, captured when the menu opens; the menu
+  // renders in a portal so the thread's scroll clipping can't hide it.
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
+  const [editors, setEditors] = useState<EditorApp[]>([])
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  const close = (): void => {
+    setAnchor(null)
+    setPos(null)
+  }
+
+  const toggle = (): void => {
+    if (anchor) return close()
+    if (btnRef.current) setAnchor(btnRef.current.getBoundingClientRect())
+    void sb.listEditors().then(setEditors)
+  }
+
+  // Clamp the menu inside the viewport, flipping above the link if it would
+  // run off the bottom. Runs once the menu (and its app list) has laid out.
+  useLayoutEffect(() => {
+    if (!anchor || !menuRef.current) return
+    const m = menuRef.current.getBoundingClientRect()
+    const margin = 8
+    let left = anchor.left
+    let top = anchor.bottom + 4
+    if (left + m.width > window.innerWidth - margin) left = window.innerWidth - margin - m.width
+    if (top + m.height > window.innerHeight - margin) top = anchor.top - m.height - 4
+    setPos({ left: Math.max(margin, left), top: Math.max(margin, top) })
+  }, [anchor, editors])
+
+  useEffect(() => {
+    if (!anchor) return
+    const onDown = (e: MouseEvent): void => {
+      const t = e.target as Node
+      if (btnRef.current?.contains(t) || menuRef.current?.contains(t)) return
+      close()
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') close()
+    }
+    // A fixed-position menu detaches from the link once anything scrolls.
+    const onScroll = (): void => close()
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    window.addEventListener('scroll', onScroll, true)
+    window.addEventListener('resize', onScroll)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+      window.removeEventListener('scroll', onScroll, true)
+      window.removeEventListener('resize', onScroll)
+    }
+  }, [anchor])
+
+  const act = (fn: () => void): void => {
+    fn()
+    close()
+  }
+
+  return (
+    <>
+      <button ref={btnRef} type="button" className="file-link" title="Open this file" onClick={toggle}>
+        {children}
+      </button>
+      {anchor &&
+        createPortal(
+          <div
+            ref={menuRef}
+            className="file-menu"
+            role="menu"
+            style={{ left: pos?.left ?? anchor.left, top: pos?.top ?? anchor.bottom + 4, visibility: pos ? 'visible' : 'hidden' }}
+          >
+            <span className="file-menu-path">{path}</span>
+            <button role="menuitem" onClick={() => act(() => void sb.openFile(cwd, path))}>
+              Open
+            </button>
+            {editors.map((ed) => (
+              <button
+                key={ed.name}
+                role="menuitem"
+                onClick={() => act(() => void sb.openFileIn(cwd, path, ed.name))}
+              >
+                {ed.name}
+              </button>
+            ))}
+            <button role="menuitem" onClick={() => act(() => void sb.revealFile(cwd, path))}>
+              Reveal in Finder
+            </button>
+          </div>,
+          document.body
+        )}
+    </>
+  )
+}
+
+function Markdown({ text, cwd }: { text: string; cwd?: string }): React.JSX.Element {
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
@@ -104,9 +260,19 @@ function Markdown({ text }: { text: string }): React.JSX.Element {
         a: (props) => <a {...props} target="_blank" rel="noreferrer" />,
         p: ({ node: _node, children, ...props }) => <p {...props}>{linkifyNodes(children)}</p>,
         li: ({ node: _node, children, ...props }) => <li {...props}>{linkifyNodes(children)}</li>,
-        code: ({ node: _node, children, ...props }) => (
-          <code {...props}>{linkifyNodes(children)}</code>
-        )
+        code: ({ node: _node, children, ...props }) => {
+          const raw = nodeText(children)
+          // Inline code that names a file becomes an open target; block code
+          // (multi-line) and non-path spans keep their normal rendering.
+          if (cwd && !raw.includes('\n') && looksLikeFilePath(raw)) {
+            return (
+              <FileLink path={raw} cwd={cwd}>
+                <code {...props}>{raw}</code>
+              </FileLink>
+            )
+          }
+          return <code {...props}>{linkifyNodes(children)}</code>
+        }
       }}
     >
       {text}
@@ -153,22 +319,59 @@ const STATUS_GROUPS: { key: ChatMeta['status'][]; label: string; cls: string }[]
   { key: ['idle'], label: 'All caught up', cls: 'idle' }
 ]
 
+// Chats in the same repo (or the same folder, when there's no repo) count as
+// one project — the same rule the avatar hue uses, so a stack is one color.
+function projectKeyOf(c: ChatMeta): string {
+  return c.repoRoot ?? c.cwd
+}
+
+type SidebarRow = { kind: 'chat'; chat: ChatMeta } | { kind: 'stack'; key: string; chats: ChatMeta[] }
+
+// Collapse same-project chats into stacks. `sorted` is newest-first, buckets
+// preserve that order, and each stack sits where its newest member would have.
+function buildRows(sorted: ChatMeta[]): SidebarRow[] {
+  const buckets = new Map<string, ChatMeta[]>()
+  for (const c of sorted) {
+    const key = projectKeyOf(c)
+    const bucket = buckets.get(key)
+    if (bucket) bucket.push(c)
+    else buckets.set(key, [c])
+  }
+  const rows: SidebarRow[] = []
+  for (const c of sorted) {
+    const key = projectKeyOf(c)
+    const bucket = buckets.get(key)
+    if (!bucket) continue
+    buckets.delete(key)
+    rows.push(bucket.length === 1 ? { kind: 'chat', chat: c } : { kind: 'stack', key, chats: bucket })
+  }
+  return rows
+}
+
 export default function App(): React.JSX.Element {
   const [chats, setChats] = useState<ChatMeta[]>([])
   const [currentId, setCurrentId] = useState<string | null>(null)
   const [items, setItems] = useState<ThreadItem[]>([])
-  const [rawMode, setRawMode] = useState(false)
-  const [raw, setRaw] = useState<unknown[]>([])
   const [info, setInfo] = useState<ProjectInfo | null>(null)
   const [models, setModels] = useState<ModelChoice[]>(FALLBACK_MODELS)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [auth, setAuth] = useState<AuthStatus | null>(null)
+  const [profile, setProfile] = useState<UserProfile | null>(null)
   const [commands, setCommands] = useState<SlashCommandInfo[]>([])
   const [backlog, setBacklog] = useState<BacklogEntry[]>([])
   const [backlogMode, setBacklogMode] = useState(false)
+  // Latest compaction progress on a chat — a signal (not data) the usage meter
+  // watches to shimmer while compacting and ease its fill down on completion.
+  // `at` retriggers the effect on repeat compactions.
+  const [compaction, setCompaction] = useState<{
+    chatId: string
+    phase: 'start' | 'done' | 'failed'
+    at: number
+  } | null>(null)
   const backlogTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [draft, setDraft] = useState('')
-  const composerRef = useRef<HTMLInputElement>(null)
+  const [attachments, setAttachments] = useState<Attachment[]>([])
+  const composerRef = useRef<HTMLTextAreaElement>(null)
   const currentIdRef = useRef(currentId)
   currentIdRef.current = currentId
 
@@ -183,6 +386,14 @@ export default function App(): React.JSX.Element {
     if (auth?.method !== 'none') return
     const timer = setInterval(() => void sb.getAuthStatus().then(setAuth), 3000)
     return () => clearInterval(timer)
+  }, [auth?.method])
+  // Load the account profile once signed in (and refresh if the method changes).
+  useEffect(() => {
+    if (!auth || auth.method === 'none') {
+      setProfile(null)
+      return
+    }
+    void sb.getUserProfile().then(setProfile)
   }, [auth?.method])
 
   useEffect(() => {
@@ -240,9 +451,8 @@ export default function App(): React.JSX.Element {
       if (event.commands) {
         setCommands(event.commands)
       }
-      if (event.raw) {
-        const entry = event.raw
-        setRaw((prev) => [...prev, entry])
+      if (event.compaction) {
+        setCompaction({ chatId: event.chatId, phase: event.compaction.phase, at: Date.now() })
       }
     })
   }, [refreshBacklog])
@@ -250,12 +460,10 @@ export default function App(): React.JSX.Element {
   useEffect(() => {
     if (!currentId) return
     setItems([])
-    setRaw([])
-    setRawMode(false)
     setDraft('')
+    setAttachments([])
     setCommands([])
     void sb.getItems(currentId).then(setItems)
-    void sb.getRaw(currentId).then(setRaw)
     void sb.getCommands(currentId).then((list) => {
       if (list.length > 0) setCommands(list)
     })
@@ -305,8 +513,8 @@ export default function App(): React.JSX.Element {
   }, [closeChat, chatCreated])
 
   const send = useCallback(
-    (text: string) => {
-      if (currentId) void sb.sendMessage(currentId, text)
+    (text: string, attachments: Attachment[]) => {
+      if (currentId) void sb.sendMessage(currentId, text, attachments)
     },
     [currentId]
   )
@@ -350,7 +558,11 @@ export default function App(): React.JSX.Element {
       }
       if (paletteOpen) return // palette owns the keyboard while open
       const target = e.target as HTMLElement
-      if (target.tagName === 'INPUT' && (target as HTMLInputElement).value !== '') return
+      if (
+        (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') &&
+        (target as HTMLInputElement | HTMLTextAreaElement).value !== ''
+      )
+        return
       // In the backlog, number keys act on the topmost entry.
       if (backlogMode) {
         const top = backlog[0]
@@ -421,21 +633,24 @@ export default function App(): React.JSX.Element {
           <ChatPane
             chat={current}
             items={items}
-            raw={raw}
-            rawMode={rawMode}
             models={models}
             commands={commands.length > 0 ? commands : FALLBACK_COMMANDS}
             onPatchChat={patchChat}
             draft={draft}
             setDraft={setDraft}
+            attachments={attachments}
+            setAttachments={setAttachments}
             composerRef={composerRef}
-            onToggleRaw={() => setRawMode((v) => !v)}
             onSend={send}
             onDecide={decide}
             onAnswer={answer}
             onInterrupt={() => void sb.interrupt(current.id)}
           />
-          <DetailsPanel chat={current} info={info} />
+          <DetailsPanel
+            chat={current}
+            info={info}
+            compaction={compaction && compaction.chatId === current.id ? compaction : null}
+          />
         </>
       ) : (
         <EmptyState onCreated={chatCreated} />
@@ -450,6 +665,93 @@ export default function App(): React.JSX.Element {
           onClose={() => setPaletteOpen(false)}
         />
       )}
+      <ProfileBadge profile={profile} />
+    </div>
+  )
+}
+
+// Bottom-right account chip: a quiet avatar + name that expands to a card with
+// email, org, plan, role, and whether extra usage is on. Reassures beginners
+// they're signed in and shows which account is driving their sessions.
+function ProfileBadge({ profile }: { profile: UserProfile | null }): React.JSX.Element | null {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  if (!profile || profile.authMethod === 'none') return null
+
+  const apiKey = profile.authMethod !== 'subscription'
+  const name = profile.name ?? (apiKey ? 'API key' : 'Account')
+  const initial = (profile.name ?? profile.email ?? (apiKey ? '⚿' : '?')).trim().charAt(0).toUpperCase()
+  const authLabel =
+    profile.authMethod === 'subscription'
+      ? 'Claude subscription'
+      : profile.authMethod === 'env-key'
+        ? 'API key (environment)'
+        : 'API key'
+
+  return (
+    <div className="profile" ref={ref}>
+      {open && (
+        <div className="profile-card" role="dialog" aria-label="Account">
+          <div className="profile-card-head">
+            <span className="profile-avatar lg">{initial}</span>
+            <div className="profile-id">
+              <div className="profile-name">{name}</div>
+              {profile.email && <div className="profile-email">{profile.email}</div>}
+            </div>
+          </div>
+          <dl className="profile-kv">
+            {profile.organizationName && (
+              <>
+                <dt>Organization</dt>
+                <dd>{profile.organizationName}</dd>
+              </>
+            )}
+            {profile.plan && (
+              <>
+                <dt>Plan</dt>
+                <dd>{profile.plan}</dd>
+              </>
+            )}
+            {profile.role && (
+              <>
+                <dt>Role</dt>
+                <dd>{profile.role}</dd>
+              </>
+            )}
+            {profile.extraUsageEnabled !== undefined && (
+              <>
+                <dt>Extra usage</dt>
+                <dd className={profile.extraUsageEnabled ? 'on' : ''}>
+                  {profile.extraUsageEnabled ? 'On' : 'Off'}
+                </dd>
+              </>
+            )}
+            <dt>Signed in with</dt>
+            <dd>{authLabel}</dd>
+          </dl>
+        </div>
+      )}
+      <button className="profile-chip" onClick={() => setOpen((v) => !v)} title="Your account">
+        <span className="profile-avatar">{initial}</span>
+        <span className="profile-chip-name">{name}</span>
+      </button>
     </div>
   )
 }
@@ -654,6 +956,131 @@ function NewChatControl({
   )
 }
 
+function ChatRow({
+  chat,
+  selected,
+  onSelect,
+  onClose,
+  className
+}: {
+  chat: ChatMeta
+  selected: boolean
+  onSelect: (id: string) => void
+  onClose: (id: string) => void
+  className?: string
+}): React.JSX.Element {
+  return (
+    <div
+      className={className ? `chat-item ${className}` : 'chat-item'}
+      role="button"
+      tabIndex={0}
+      aria-current={selected}
+      onClick={() => onSelect(chat.id)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') onSelect(chat.id)
+      }}
+    >
+      <ProjectAvatar cwd={chat.cwd} hueKey={chat.repoRoot} />
+      <span className="chat-name">{chat.title}</span>
+      <span className="chat-time">{timeAgo(chat.updatedAt)}</span>
+      <span className={`chat-preview ${chat.status === 'needs-you' || chat.status === 'error' ? 'attn' : chat.status === 'working' ? 'work' : ''}`}>
+        {chat.statusLine || chat.preview}
+      </span>
+      {chat.status === 'needs-you' && <span className="badge" />}
+      {chat.status === 'working' && <span className="badge work" />}
+      <button
+        className="chat-close"
+        title="Close this chat (⌘W)"
+        aria-label={`Close ${chat.title}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          onClose(chat.id)
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  )
+}
+
+// Same-project chats piled into one row. Clicking the head only discloses the
+// members — selecting a chat happens on the rows inside, never on the pile.
+function ThreadStack({
+  groupKey,
+  chats,
+  sectionCls,
+  currentId,
+  expanded,
+  onToggle,
+  onSelect,
+  onClose
+}: {
+  groupKey: string
+  chats: ChatMeta[]
+  sectionCls: string
+  currentId: string | null
+  expanded: boolean
+  onToggle: () => void
+  onSelect: (id: string) => void
+  onClose: (id: string) => void
+}): React.JSX.Element {
+  const head = chats[0]
+  const projectName = groupKey.split('/').filter(Boolean).pop() ?? groupKey
+  const containsSelected = chats.some((c) => c.id === currentId)
+  return (
+    <div className={`stack ${expanded ? 'open' : 'collapsed'}`}>
+      <div
+        className="chat-item stack-head"
+        role="button"
+        tabIndex={0}
+        aria-expanded={expanded}
+        aria-current={!expanded && containsSelected}
+        aria-label={`${projectName} — ${chats.length} chats`}
+        onClick={onToggle}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault()
+            onToggle()
+          }
+        }}
+      >
+        <ProjectAvatar cwd={groupKey} hueKey={groupKey} />
+        <span className="stack-title">
+          <span className="chat-name">{projectName}</span>
+          <span className="stack-count">{chats.length}</span>
+          <span className="stack-chevron" aria-hidden>
+            ›
+          </span>
+        </span>
+        {!expanded && (
+          <>
+            <span className="chat-time">{timeAgo(head.updatedAt)}</span>
+            <span className={`chat-preview ${head.status === 'needs-you' || head.status === 'error' ? 'attn' : head.status === 'working' ? 'work' : ''}`}>
+              {head.statusLine || head.preview}
+            </span>
+            {sectionCls === 'attn' && <span className="badge" />}
+            {sectionCls === 'work' && <span className="badge work" />}
+          </>
+        )}
+      </div>
+      <div className="stack-members" aria-hidden={!expanded}>
+        <div className="stack-members-inner">
+          {chats.map((c) => (
+            <ChatRow
+              key={c.id}
+              chat={c}
+              selected={c.id === currentId}
+              onSelect={onSelect}
+              onClose={onClose}
+              className="stack-member"
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function Sidebar({
   chats,
   currentId,
@@ -675,12 +1102,47 @@ function Sidebar({
   onCreated: (meta: ChatMeta) => void
   onClose: (id: string) => void
 }): React.JSX.Element {
+  const [grouped, setGrouped] = useState(() => localStorage.getItem('sb.groupByProject') !== '0')
+  const [expandedStacks, setExpandedStacks] = useState<Set<string>>(() => {
+    try {
+      return new Set<string>(JSON.parse(localStorage.getItem('sb.expandedStacks') ?? '[]'))
+    } catch {
+      return new Set<string>()
+    }
+  })
+
+  const toggleGrouping = (): void => {
+    const next = !grouped
+    setGrouped(next)
+    localStorage.setItem('sb.groupByProject', next ? '1' : '0')
+  }
+
+  const toggleStack = (key: string): void => {
+    const next = new Set(expandedStacks)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    setExpandedStacks(next)
+    localStorage.setItem('sb.expandedStacks', JSON.stringify([...next]))
+  }
+
   return (
     <aside className="rail">
       <div className="rail-top drag">
-        <span className="wordmark">
-          <span className="spark">✳</span> Switchboard
-        </span>
+        <span className="wordmark">Switchboard</span>
+        <button
+          className={`rail-groupby no-drag ${grouped ? 'on' : ''}`}
+          title={grouped ? 'Grouped by project — click to show every chat' : 'Group chats by project'}
+          aria-pressed={grouped}
+          onClick={toggleGrouping}
+        >
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+            <rect x="2.75" y="2.75" width="10.5" height="6.5" rx="1.75" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M4.5 11.75h7" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+            <path d="M6 14.25h4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+        </button>
+      </div>
+      <div className="rail-search no-drag">
         <button className="search-hint" title="Search chats and conversations" onClick={onOpenPalette}>
           Search <kbd>⌘K</kbd>
         </button>
@@ -704,42 +1166,35 @@ function Sidebar({
             .filter((c) => group.key.includes(c.status))
             .sort((a, b) => b.updatedAt - a.updatedAt)
           if (inGroup.length === 0) return null
+          const rows: SidebarRow[] = grouped
+            ? buildRows(inGroup)
+            : inGroup.map((c) => ({ kind: 'chat' as const, chat: c }))
           return (
             <div key={group.label}>
               <div className={`rail-group-label ${group.cls}`}>{group.label}</div>
-              {inGroup.map((c) => (
-                <div
-                  key={c.id}
-                  className="chat-item"
-                  role="button"
-                  tabIndex={0}
-                  aria-current={c.id === currentId}
-                  onClick={() => onSelect(c.id)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') onSelect(c.id)
-                  }}
-                >
-                  <ProjectAvatar cwd={c.cwd} hueKey={c.repoRoot} />
-                  <span className="chat-name">{c.title}</span>
-                  <span className="chat-time">{timeAgo(c.updatedAt)}</span>
-                  <span className={`chat-preview ${c.status === 'needs-you' || c.status === 'error' ? 'attn' : c.status === 'working' ? 'work' : ''}`}>
-                    {c.statusLine || c.preview}
-                  </span>
-                  {c.status === 'needs-you' && <span className="badge" />}
-                  {c.status === 'working' && <span className="badge work" />}
-                  <button
-                    className="chat-close"
-                    title="Close this chat (⌘W)"
-                    aria-label={`Close ${c.title}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onClose(c.id)
-                    }}
-                  >
-                    ✕
-                  </button>
-                </div>
-              ))}
+              {rows.map((row) =>
+                row.kind === 'chat' ? (
+                  <ChatRow
+                    key={row.chat.id}
+                    chat={row.chat}
+                    selected={row.chat.id === currentId}
+                    onSelect={onSelect}
+                    onClose={onClose}
+                  />
+                ) : (
+                  <ThreadStack
+                    key={`${group.cls}:${row.key}`}
+                    groupKey={row.key}
+                    chats={row.chats}
+                    sectionCls={group.cls}
+                    currentId={currentId}
+                    expanded={expandedStacks.has(`${group.cls}:${row.key}`)}
+                    onToggle={() => toggleStack(`${group.cls}:${row.key}`)}
+                    onSelect={onSelect}
+                    onClose={onClose}
+                  />
+                )
+              )}
             </div>
           )
         })}
@@ -760,15 +1215,14 @@ function Sidebar({
 function ChatPane({
   chat,
   items,
-  raw,
-  rawMode,
   models,
   commands,
   onPatchChat,
   draft,
   setDraft,
+  attachments,
+  setAttachments,
   composerRef,
-  onToggleRaw,
   onSend,
   onDecide,
   onAnswer,
@@ -776,16 +1230,15 @@ function ChatPane({
 }: {
   chat: ChatMeta
   items: ThreadItem[]
-  raw: unknown[]
-  rawMode: boolean
   models: ModelChoice[]
   commands: SlashCommandInfo[]
   onPatchChat: (id: string, patch: Partial<ChatMeta>) => void
   draft: string
   setDraft: (v: string) => void
-  composerRef: React.RefObject<HTMLInputElement | null>
-  onToggleRaw: () => void
-  onSend: (text: string) => void
+  attachments: Attachment[]
+  setAttachments: React.Dispatch<React.SetStateAction<Attachment[]>>
+  composerRef: React.RefObject<HTMLTextAreaElement | null>
+  onSend: (text: string, attachments: Attachment[]) => void
   onDecide: (d: 'allow' | 'always' | 'deny') => void
   onAnswer: (a: Record<string, string> | null) => void
   onInterrupt: () => void
@@ -799,13 +1252,104 @@ function ChatPane({
     // has scrolled up to read something earlier.
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
     if (nearBottom) el.scrollTop = el.scrollHeight
-  }, [items, chat.status, rawMode])
+  }, [items, chat.status])
+
+  // Grow the composer to fit what's typed (soft-wrapped, no inserted newlines);
+  // CSS caps the height and lets it scroll past that.
+  useLayoutEffect(() => {
+    const el = composerRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${el.scrollHeight}px`
+  }, [draft, composerRef])
+
+  // Large pastes collapse to a "[Pasted text #n +N lines]" placeholder the user
+  // sees inline; the full content is held here and spliced back in on send.
+  const [pastes, setPastes] = useState<{ token: string; content: string }[]>([])
+  const pasteSeq = useRef(0)
 
   const submit = (): void => {
-    const text = draft.trim()
-    if (!text) return
-    onSend(text)
+    let text = draft.trim()
+    for (const p of pastes) {
+      if (text.includes(p.token)) text = text.split(p.token).join(p.content)
+    }
+    if (!text && attachments.length === 0) return
+    onSend(text, attachments)
     setDraft('')
+    setAttachments([])
+    setPastes([])
+  }
+
+  const onComposerPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>): void => {
+    const text = e.clipboardData.getData('text')
+    const lineCount = text.split('\n').length
+    // Small pastes flow straight in and soft-wrap; only big blobs get collapsed.
+    if (lineCount <= PASTE_LINE_THRESHOLD && text.length <= PASTE_CHAR_THRESHOLD) return
+    e.preventDefault()
+    const measure = lineCount > 1 ? `+${lineCount} lines` : `+${text.length} chars`
+    const token = `[Pasted text #${++pasteSeq.current} ${measure}]`
+    setPastes((prev) => [...prev, { token, content: text }])
+    const el = e.currentTarget
+    const start = el.selectionStart ?? draft.length
+    const end = el.selectionEnd ?? draft.length
+    setDraft(draft.slice(0, start) + token + draft.slice(end))
+    // Put the caret just past the inserted placeholder once React re-renders.
+    requestAnimationFrame(() => {
+      const pos = start + token.length
+      el.setSelectionRange(pos, pos)
+    })
+  }
+
+  // Attachments: dropped or picked files are resolved to Attachment
+  // descriptors (stat'd on the main side) and merged into the pending list.
+  // Oversized images are rejected rather than embedded — everything else
+  // (including any non-image file, however large) is just path-referenced,
+  // so no size check applies to it.
+  const [dragActive, setDragActive] = useState(false)
+  const [attachError, setAttachError] = useState<string | null>(null)
+  const dragDepth = useRef(0)
+
+  const addPaths = async (paths: string[]): Promise<void> => {
+    if (paths.length === 0) return
+    const described = await sb.describeAttachments(paths)
+    setAttachments((prev) => {
+      const existing = new Set(prev.map((a) => a.path))
+      const fresh = described.filter((a) => !existing.has(a.path))
+      const tooBig = fresh.filter((a) => a.isImage && a.sizeBytes > MAX_IMAGE_BYTES)
+      const ok = fresh.filter((a) => !tooBig.includes(a))
+      setAttachError(
+        tooBig.length > 0
+          ? `${tooBig.map((a) => a.name).join(', ')} ${tooBig.length === 1 ? 'is' : 'are'} too large to attach (max 5MB)`
+          : null
+      )
+      return ok.length > 0 ? [...prev, ...ok] : prev
+    })
+  }
+
+  const removeAttachment = (path: string): void => {
+    setAttachments((prev) => prev.filter((a) => a.path !== path))
+  }
+
+  const onDragOver = (e: React.DragEvent): void => {
+    e.preventDefault()
+  }
+  const onDragEnter = (e: React.DragEvent): void => {
+    e.preventDefault()
+    if (!e.dataTransfer.types.includes('Files')) return
+    dragDepth.current += 1
+    setDragActive(true)
+  }
+  const onDragLeave = (e: React.DragEvent): void => {
+    e.preventDefault()
+    dragDepth.current = Math.max(0, dragDepth.current - 1)
+    if (dragDepth.current === 0) setDragActive(false)
+  }
+  const onDrop = (e: React.DragEvent): void => {
+    e.preventDefault()
+    dragDepth.current = 0
+    setDragActive(false)
+    const paths = Array.from(e.dataTransfer.files).map((f) => sb.getPathForFile(f))
+    void addPaths(paths)
   }
 
   // Command popover: opens while the draft is a bare "/command" prefix (no
@@ -869,28 +1413,44 @@ function ChatPane({
         pickCommand(cmdHits[cmdSel])
         return
       }
-      if (e.key === 'Enter') {
+      if (e.key === 'Enter' && !e.shiftKey) {
         const chosen = cmdHits[cmdSel]
         // Enter on the exactly-typed command runs it; otherwise it completes.
+        e.preventDefault()
         if (chosen.name.toLowerCase() === cmdFilter) submit()
-        else {
-          e.preventDefault()
-          pickCommand(chosen)
-        }
+        else pickCommand(chosen)
         return
       }
     }
-    if (e.key === 'Enter') submit()
+    // Enter sends; Shift+Enter drops in a real newline. Plain wrapping is visual
+    // only (the textarea soft-wraps — no newline is inserted into the text).
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      submit()
+    }
   }
 
   return (
-    <section className="chat">
+    <section
+      className="chat"
+      onDragOver={onDragOver}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDrop={onDrop}
+    >
+      {dragActive && (
+        <div className="drop-overlay">
+          <span>Drop to attach</span>
+        </div>
+      )}
       <div className="chat-head drag">
         <ProjectAvatar cwd={chat.cwd} hueKey={chat.repoRoot} />
-        <div>
+        <div className="chat-head-info">
           <div className="chat-head-name">{chat.title}</div>
           <div className="chat-head-sub">
-            {shortPath(chat.cwd)}
+            <span className="chat-head-path" title={chat.cwd}>
+              {shortPath(chat.cwd)}
+            </span>
             {chat.isWorktree && chat.repoRoot && (
               <span className="wt-badge" title="A separate working copy — changes here can’t collide with other chats in this repo">
                 ⑂ copy of {chat.repoRoot.split('/').pop()}
@@ -928,43 +1488,35 @@ function ChatPane({
               ◼ Stop
             </button>
           )}
-          <button
-            className="icon-btn"
-            aria-pressed={rawMode}
-            onClick={onToggleRaw}
-            title="Show the raw session log — same session, no translation"
-          >
-            {'</>'}
-          </button>
         </div>
       </div>
 
-      {rawMode ? (
-        <div className="raw" ref={scrollRef}>
-          <pre>{raw.map((m) => JSON.stringify(m)).join('\n') || 'Nothing logged yet this launch.'}</pre>
+      <div className="thread" ref={scrollRef}>
+        <div className="thread-inner">
+          {items.length === 0 && (
+            <p className="thread-empty">
+              This chat lives in <code>{shortPath(chat.cwd)}</code>. Ask Claude anything about this
+              project — it can read the code, make changes, and run commands, and it will ask before
+              doing anything that needs your OK.
+            </p>
+          )}
+          {items.map((item) => (
+            <ThreadItemView
+              key={item.id}
+              item={item}
+              cwd={chat.cwd}
+              onDecide={onDecide}
+              onAnswer={onAnswer}
+            />
+          ))}
+          {chat.status === 'working' && (
+            <div className="working">
+              <span className="spinner" />
+              {chat.statusLine || 'Working…'}
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="thread" ref={scrollRef}>
-          <div className="thread-inner">
-            {items.length === 0 && (
-              <p className="thread-empty">
-                This chat lives in <code>{shortPath(chat.cwd)}</code>. Ask Claude anything about this
-                project — it can read the code, make changes, and run commands, and it will ask before
-                doing anything that needs your OK.
-              </p>
-            )}
-            {items.map((item) => (
-              <ThreadItemView key={item.id} item={item} onDecide={onDecide} onAnswer={onAnswer} />
-            ))}
-            {chat.status === 'working' && (
-              <div className="working">
-                <span className="spinner" />
-                Working…
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      </div>
 
       <div className="composer">
         {cmdOpen && cmdHits.length > 0 && (
@@ -992,7 +1544,39 @@ function ChatPane({
             <span className="cmd-desc">{activeCommand.description}</span>
           </div>
         )}
+        {attachments.length > 0 && (
+          <div className="attachment-row">
+            {attachments.map((a) => (
+              <div className="attachment-chip" key={a.path} title={a.name}>
+                {a.isImage ? (
+                  <img className="attachment-thumb" src={`file://${a.path}`} alt="" />
+                ) : (
+                  <span className="attachment-thumb attachment-generic">📄</span>
+                )}
+                <span className="attachment-name">{a.name}</span>
+                <button
+                  className="attachment-remove"
+                  aria-label={`Remove ${a.name}`}
+                  onClick={() => removeAttachment(a.path)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {attachError && <div className="attach-error">{attachError}</div>}
         <div className="composer-inner">
+          <button
+            className="attach-btn"
+            title="Attach files"
+            aria-label="Attach files"
+            onClick={() => {
+              void sb.chooseAttachments().then(addPaths)
+            }}
+          >
+            +
+          </button>
           <button
             className="slash-btn"
             title="Commands (⌘/)"
@@ -1005,12 +1589,15 @@ function ChatPane({
           >
             /
           </button>
-          <input
+          <textarea
             ref={composerRef}
+            className="composer-textarea"
             value={draft}
+            rows={1}
             placeholder={items.length === 0 ? 'What would you like Claude to do?' : 'Reply to Claude…'}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={composerKeyDown}
+            onPaste={onComposerPaste}
           />
           <button className="send" aria-label="Send" onClick={submit}>
             ↑
@@ -1018,6 +1605,90 @@ function ChatPane({
         </div>
       </div>
     </section>
+  )
+}
+
+// Ambient context-window meter with a compact button. The fill reads how full
+// the window is; color escalates as it fills so the cue to compact lives on the
+// control that acts. Clicking compacts; the fill then animates down to the new
+// level, driven by the real before/after token counts from the compaction event.
+function UsageMeter({
+  chat,
+  compaction
+}: {
+  chat: ChatMeta
+  compaction: { chatId: string; phase: 'start' | 'done' | 'failed'; at: number } | null
+}): React.JSX.Element {
+  const [compacting, setCompacting] = useState(false)
+  const [draining, setDraining] = useState(false)
+  const lastAt = useRef(compaction?.at ?? 0)
+
+  // Follow compaction progress from the engine. `start` covers the engine's own
+  // auto-compact too (no click), so the meter shimmers either way; `done` eases
+  // the fill down with the deliberate drain curve; `failed` just stops.
+  useEffect(() => {
+    if (!compaction || compaction.at === lastAt.current) return undefined
+    lastAt.current = compaction.at
+    if (compaction.phase === 'start') {
+      setCompacting(true)
+      return undefined
+    }
+    setCompacting(false)
+    if (compaction.phase === 'done') {
+      // Hold the drain curve open past the "done" signal — the fill only drops
+      // once the next turn's smaller usage lands, a beat later.
+      setDraining(true)
+      const t = setTimeout(() => setDraining(false), 1800)
+      return () => clearTimeout(t)
+    }
+    return undefined
+  }, [compaction])
+
+  // Safety net: if the boundary event never arrives, don't spin forever.
+  useEffect(() => {
+    if (!compacting) return undefined
+    const t = setTimeout(() => setCompacting(false), 30000)
+    return () => clearTimeout(t)
+  }, [compacting])
+
+  const fmt = (n: number): string =>
+    n >= 1_000_000
+      ? (n / 1_000_000).toFixed(1).replace(/\.0$/, '') + 'M'
+      : n >= 1_000
+        ? Math.round(n / 1_000) + 'K'
+        : String(n)
+
+  const tokens = chat.contextTokens ?? 0
+  const windowSize = chat.contextWindow ?? 1_000_000
+  const ratio = Math.min(1, Math.max(0, tokens / windowSize))
+  const pct = Math.round(ratio * 100)
+  const level = ratio >= 0.88 ? 'full' : ratio >= 0.7 ? 'warn' : 'calm'
+  // Always a clear text label — never an icon-only control, which reads as a
+  // close/delete affordance rather than an action.
+  const label = compacting ? 'Compacting…' : level === 'full' ? 'Compact now' : 'Compact'
+
+  return (
+    <div className={`usage ${level}${compacting ? ' compacting' : ''}${draining ? ' draining' : ''}`}>
+      <div
+        className="usage-bar"
+        title={`${fmt(tokens)} of ${fmt(windowSize)} tokens used · ${pct}%`}
+      >
+        <div className="usage-fill" style={{ width: `${Math.max(2, ratio * 100)}%` }} />
+      </div>
+      <span className="usage-pct">{pct}%</span>
+      <button
+        className="usage-compact"
+        disabled={compacting || tokens === 0}
+        onClick={() => {
+          if (compacting) return
+          setCompacting(true)
+          void sb.compact(chat.id)
+        }}
+        title="Compact the conversation to free up the context window"
+      >
+        <span className="usage-compact-label">{label}</span>
+      </button>
+    </div>
   )
 }
 
@@ -1090,10 +1761,12 @@ function ModeSwitcher({
 
 function ThreadItemView({
   item,
+  cwd,
   onDecide,
   onAnswer
 }: {
   item: ThreadItem
+  cwd: string
   onDecide: (d: 'allow' | 'always' | 'deny') => void
   onAnswer: (a: Record<string, string> | null) => void
 }): React.JSX.Element | null {
@@ -1101,7 +1774,21 @@ function ThreadItemView({
     case 'user':
       return (
         <div className="msg-user">
-          <div className="bubble">{linkifyText(item.text)}</div>
+          {item.attachments && item.attachments.length > 0 && (
+            <div className="attachment-row">
+              {item.attachments.map((a) => (
+                <div className="attachment-chip" key={a.path} title={a.name}>
+                  {a.isImage ? (
+                    <img className="attachment-thumb" src={`file://${a.path}`} alt="" />
+                  ) : (
+                    <span className="attachment-thumb attachment-generic">📄</span>
+                  )}
+                  <span className="attachment-name">{a.name}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {item.text && <div className="bubble">{linkifyText(item.text)}</div>}
         </div>
       )
     case 'claude':
@@ -1109,7 +1796,7 @@ function ThreadItemView({
         <div className="msg-claude">
           <span className="spark-dot">✳</span>
           <div className="body markdown">
-            <Markdown text={item.text} />
+            <Markdown text={item.text} cwd={cwd} />
           </div>
         </div>
       )
@@ -1118,10 +1805,20 @@ function ThreadItemView({
         <div className="steps">
           <div className="step">
             <span className="ico">·</span>
-            <span>{item.summary}</span>
+            {item.path ? (
+              <FileLink path={item.path} cwd={cwd}>
+                {item.summary}
+              </FileLink>
+            ) : (
+              <span>{item.summary}</span>
+            )}
           </div>
         </div>
       )
+    case 'agent':
+      return <AgentCard item={item} />
+    case 'tasks':
+      return <TaskListCard items={item.items} />
     case 'ask':
       return <AskCard item={item} onDecide={onDecide} />
     case 'question':
@@ -1133,6 +1830,120 @@ function ThreadItemView({
     default:
       return null
   }
+}
+
+// Claude's task list as a live checklist. Items flip to checked as they finish;
+// the one in progress shows its present-continuous label and a pulsing dot.
+function TaskListCard({ items }: { items: TaskEntry[] }): React.JSX.Element {
+  const done = items.filter((t) => t.status === 'completed').length
+  const allDone = items.length > 0 && done === items.length
+  const statusById = new Map(items.map((t) => [t.id, t.status]))
+  return (
+    <div className="tasklist">
+      <div className="tasklist-head">
+        <span className="tasklist-title">Tasks</span>
+        <span className={`tasklist-count ${allDone ? 'done' : ''}`}>
+          {done}/{items.length}
+        </span>
+      </div>
+      <ul className="tasklist-items">
+        {items.map((t) => {
+          // A dependency only blocks until it finishes — the engine leaves the
+          // blockedBy id in place after the blocker completes, so filter those out.
+          const activeBlockers = (t.blockedBy ?? []).filter((id) => statusById.get(id) !== 'completed')
+          const blocked = t.status !== 'completed' && activeBlockers.length > 0
+          const label = t.status === 'in_progress' && t.activeForm ? t.activeForm : t.subject
+          return (
+            <li key={t.id} className={`task task-${t.status}${blocked ? ' task-blocked' : ''}`}>
+              <span className="task-mark" aria-hidden />
+              <span className="task-text">
+                {label}
+                {blocked && (
+                  <span className="task-blocked-note">
+                    blocked by {activeBlockers.map((b) => `#${b}`).join(', ')}
+                  </span>
+                )}
+              </span>
+            </li>
+          )
+        })}
+      </ul>
+    </div>
+  )
+}
+
+function formatElapsed(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000))
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`
+}
+
+// A subagent's live card: what it's working on, what it's doing right now,
+// and — once finished — a click-to-expand log of everything it did.
+function AgentCard({ item }: { item: AgentItem }): React.JSX.Element {
+  const [expanded, setExpanded] = useState(false)
+  const [, setTick] = useState(0)
+  const running = item.status === 'running'
+
+  // Tick the elapsed readout only while this agent runs.
+  useEffect(() => {
+    if (!running) return
+    const t = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [running])
+
+  const elapsed = formatElapsed((item.endedAt ?? Date.now()) - item.startedAt)
+  // Backgrounded agents don't stream their steps — task_progress reports a
+  // count instead, so show whichever signal knows more.
+  const stepTotal = Math.max(item.steps.length, item.toolUses ?? 0)
+  const stepCount = `${stepTotal} step${stepTotal === 1 ? '' : 's'}`
+
+  return (
+    <div
+      className={`agent-card ${item.status} ${expanded ? 'open' : ''}`}
+      role="button"
+      tabIndex={0}
+      aria-expanded={expanded}
+      onClick={() => setExpanded((v) => !v)}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault()
+          setExpanded((v) => !v)
+        }
+      }}
+    >
+      <div className="agent-head">
+        {running ? (
+          <span className="agent-dot" />
+        ) : (
+          <span className="agent-mark">
+            {item.status === 'error' ? '⚠' : item.status === 'interrupted' ? '◼' : '✓'}
+          </span>
+        )}
+        <span className="agent-title">{item.description}</span>
+        {item.agentType && <span className="agent-chip">{item.agentType}</span>}
+        <span className="agent-elapsed">{running ? elapsed : `${stepCount} · ${elapsed}`}</span>
+      </div>
+      {running && item.activity && (
+        <div className="agent-activity">
+          <span key={item.activity} className="agent-activity-text">
+            {item.activity}
+          </span>
+        </div>
+      )}
+      <div className="agent-details" aria-hidden={!expanded}>
+        <div className="agent-details-inner">
+          {item.steps.length === 0 && <div className="agent-step faint">No steps yet</div>}
+          {item.steps.map((s, i) => (
+            <div key={i} className="agent-step">
+              <span className="ico">·</span>
+              <span>{s.summary}</span>
+            </div>
+          ))}
+          {!running && item.resultText && <div className="agent-result">{item.resultText}</div>}
+        </div>
+      </div>
+    </div>
+  )
 }
 
 function AskCard({
@@ -1187,7 +1998,7 @@ function BacklogPane({
     <section className="chat backlog">
       <div className="chat-head drag">
         <span className="approvals-icon big">⚡</span>
-        <div>
+        <div className="chat-head-info">
           <div className="chat-head-name">Approvals</div>
           <div className="chat-head-sub sans">
             {backlog.length === 0
@@ -1353,7 +2164,15 @@ function QuestionCard({
   )
 }
 
-function DetailsPanel({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null }): React.JSX.Element {
+function DetailsPanel({
+  chat,
+  info,
+  compaction
+}: {
+  chat: ChatMeta
+  info: ProjectInfo | null
+  compaction: { chatId: string; phase: 'start' | 'done' | 'failed'; at: number } | null
+}): React.JSX.Element {
   const [editors, setEditors] = useState<EditorApp[]>([])
 
   useEffect(() => {
@@ -1405,6 +2224,10 @@ function DetailsPanel({ chat, info }: { chat: ChatMeta; info: ProjectInfo | null
             </button>
           ))}
         </div>
+      </div>
+      <div className="d-section">
+        <h3>Context</h3>
+        <UsageMeter chat={chat} compaction={compaction} />
       </div>
       <div className="d-section">
         <h3>Project shortcuts</h3>

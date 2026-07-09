@@ -2,14 +2,14 @@ import { app, BrowserWindow, dialog, ipcMain, Menu, Notification, shell } from '
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { authStatus, openLoginTerminal, setStoredApiKey } from './auth'
+import { authStatus, getUserProfile, openLoginTerminal, setStoredApiKey } from './auth'
 import { ChatSession } from './sessions'
 import { listEditors, openInEditor } from './editors'
 import { getModels, loadCachedModels, refreshModels } from './models'
 import { getProjectInfo, getRepoIdentity } from './projectInfo'
 import { loadTranscriptItems } from './transcript'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
-import type { ChatEvent, ChatMeta, PermissionDecision, PermissionModeChoice } from '../shared/types'
+import type { Attachment, ChatEvent, ChatMeta, PermissionDecision, PermissionModeChoice } from '../shared/types'
 
 const sessions = new Map<string, ChatSession>()
 let chats: ChatMeta[] = []
@@ -109,6 +109,33 @@ function projectsRoot(): string {
   return fallback
 }
 
+// The only image types the Anthropic API accepts as base64 content blocks.
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp'
+}
+
+function describeAttachment(filePath: string): Attachment | null {
+  try {
+    const stat = fs.statSync(filePath)
+    if (!stat.isFile()) return null
+    const ext = path.extname(filePath).toLowerCase()
+    const imageMime = IMAGE_MIME_BY_EXT[ext]
+    return {
+      path: filePath,
+      name: path.basename(filePath),
+      mime: imageMime ?? 'application/octet-stream',
+      isImage: imageMime !== undefined,
+      sizeBytes: stat.size
+    }
+  } catch {
+    return null // doesn't exist / not accessible
+  }
+}
+
 function createChatMeta(cwd: string): ChatMeta {
   return {
     id: randomUUID(),
@@ -204,6 +231,7 @@ app.whenReady().then(() => {
   ipcMain.handle('chats:list', () => chats)
 
   ipcMain.handle('auth:status', () => authStatus())
+  ipcMain.handle('auth:profile', () => getUserProfile())
   ipcMain.handle('auth:open-login', () => openLoginTerminal())
   ipcMain.handle('auth:set-key', (_e, key: string | null) => {
     setStoredApiKey(key)
@@ -251,8 +279,27 @@ app.whenReady().then(() => {
     return meta
   })
 
-  ipcMain.handle('chats:send', (_e, chatId: string, text: string) => {
-    getSession(chatId)?.send(text)
+  ipcMain.handle('chats:send', (_e, chatId: string, text: string, attachments?: Attachment[]) => {
+    getSession(chatId)?.send(text, attachments)
+  })
+
+  ipcMain.handle('chats:compact', (_e, chatId: string) => {
+    getSession(chatId)?.compact()
+  })
+
+  // Native Finder-style open panel — no extension filter, since any filetype
+  // Claude can read is a valid attachment.
+  ipcMain.handle('files:choose-attachments', async () => {
+    if (!win) return []
+    const picked = await dialog.showOpenDialog(win, {
+      title: 'Attach files',
+      properties: ['openFile', 'multiSelections']
+    })
+    return picked.canceled ? [] : picked.filePaths
+  })
+
+  ipcMain.handle('files:describe-attachments', (_e, paths: string[]) => {
+    return paths.map(describeAttachment).filter((a): a is Attachment => a !== null)
   })
 
   ipcMain.handle('chats:permission', (_e, chatId: string, decision: PermissionDecision) => {
@@ -297,8 +344,6 @@ app.whenReady().then(() => {
     const meta = chats.find((c) => c.id === chatId)
     return meta ? itemsFor(meta) : []
   })
-
-  ipcMain.handle('chats:raw', (_e, chatId: string) => sessions.get(chatId)?.rawLog ?? [])
 
   ipcMain.handle('chats:commands', (_e, chatId: string) => sessions.get(chatId)?.commands ?? [])
 
@@ -391,6 +436,38 @@ app.whenReady().then(() => {
 
   ipcMain.handle('project:open-in', (_e, cwd: string, editorName: string) => {
     const safe = chatCwd(cwd)
+    if (safe) openInEditor(editorName, safe)
+  })
+
+  // Individual files can only be opened when they live inside a chat's folder,
+  // so the renderer can't point these at arbitrary paths on disk. Relative
+  // references (as Claude usually writes them) resolve against that folder.
+  const fileInChat = (cwd: string, filePath: string): string | undefined => {
+    const root = chatCwd(cwd)
+    if (!root) return
+    const abs = path.resolve(root, filePath)
+    const rel = path.relative(root, abs)
+    if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return
+    try {
+      if (!fs.statSync(abs).isFile()) return
+    } catch {
+      return // doesn't exist
+    }
+    return abs
+  }
+
+  ipcMain.handle('file:open', (_e, cwd: string, filePath: string) => {
+    const safe = fileInChat(cwd, filePath)
+    if (safe) void shell.openPath(safe) // system default for this file type
+  })
+
+  ipcMain.handle('file:reveal', (_e, cwd: string, filePath: string) => {
+    const safe = fileInChat(cwd, filePath)
+    if (safe) shell.showItemInFolder(safe)
+  })
+
+  ipcMain.handle('file:open-in', (_e, cwd: string, filePath: string, editorName: string) => {
+    const safe = fileInChat(cwd, filePath)
     if (safe) openInEditor(editorName, safe)
   })
 
