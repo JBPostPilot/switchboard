@@ -35,7 +35,16 @@ export function saveChats(chats: ChatMeta[]): void {
 
 export function loadItems(chatId: string): ThreadItem[] {
   try {
-    return JSON.parse(fs.readFileSync(path.join(dataDir(), `${chatId}.json`), 'utf8')) as ThreadItem[]
+    const items = JSON.parse(
+      fs.readFileSync(path.join(dataDir(), `${chatId}.json`), 'utf8')
+    ) as ThreadItem[]
+    // Nothing is running right after launch — a persisted 'running' agent
+    // card was cut off by a quit or crash.
+    return items.map((i) =>
+      i.kind === 'agent' && i.status === 'running'
+        ? { ...i, status: 'interrupted' as const, endedAt: i.endedAt ?? i.ts, activity: undefined }
+        : i
+    )
   } catch {
     return []
   }

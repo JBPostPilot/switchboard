@@ -1,5 +1,6 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
+  Attachment,
   AuthStatus,
   BacklogEntry,
   ChatEvent,
@@ -11,7 +12,8 @@ import type {
   ProjectInfo,
   SearchHit,
   SlashCommandInfo,
-  ThreadItem
+  ThreadItem,
+  UserProfile
 } from '../shared/types'
 
 const api = {
@@ -19,6 +21,7 @@ const api = {
   createChat: (opts?: { newProjectName?: string }): Promise<ChatMeta | null> =>
     ipcRenderer.invoke('chats:create', opts),
   getAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:status'),
+  getUserProfile: (): Promise<UserProfile> => ipcRenderer.invoke('auth:profile'),
   openLogin: (): Promise<void> => ipcRenderer.invoke('auth:open-login'),
   setApiKey: (key: string | null): Promise<AuthStatus> => ipcRenderer.invoke('auth:set-key', key),
   getProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:root'),
@@ -35,20 +38,24 @@ const api = {
     ipcRenderer.on('menu:action', listener)
     return () => ipcRenderer.removeListener('menu:action', listener)
   },
-  sendMessage: (chatId: string, text: string): Promise<void> =>
-    ipcRenderer.invoke('chats:send', chatId, text),
+  sendMessage: (chatId: string, text: string, attachments?: Attachment[]): Promise<void> =>
+    ipcRenderer.invoke('chats:send', chatId, text, attachments),
+  chooseAttachments: (): Promise<string[]> => ipcRenderer.invoke('files:choose-attachments'),
+  describeAttachments: (paths: string[]): Promise<Attachment[]> =>
+    ipcRenderer.invoke('files:describe-attachments', paths),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   respondPermission: (chatId: string, decision: PermissionDecision): Promise<void> =>
     ipcRenderer.invoke('chats:permission', chatId, decision),
   respondQuestion: (chatId: string, answers: Record<string, string> | null): Promise<void> =>
     ipcRenderer.invoke('chats:answer', chatId, answers),
   interrupt: (chatId: string): Promise<void> => ipcRenderer.invoke('chats:interrupt', chatId),
+  compact: (chatId: string): Promise<void> => ipcRenderer.invoke('chats:compact', chatId),
   setModel: (chatId: string, model?: string): Promise<void> =>
     ipcRenderer.invoke('chats:set-model', chatId, model),
   listModels: (): Promise<ModelChoice[]> => ipcRenderer.invoke('models:list'),
   setPermissionMode: (chatId: string, mode: PermissionModeChoice): Promise<void> =>
     ipcRenderer.invoke('chats:set-permission-mode', chatId, mode),
   getItems: (chatId: string): Promise<ThreadItem[]> => ipcRenderer.invoke('chats:items', chatId),
-  getRaw: (chatId: string): Promise<unknown[]> => ipcRenderer.invoke('chats:raw', chatId),
   getCommands: (chatId: string): Promise<SlashCommandInfo[]> =>
     ipcRenderer.invoke('chats:commands', chatId),
   getBacklog: (): Promise<BacklogEntry[]> => ipcRenderer.invoke('backlog:list'),
@@ -58,6 +65,12 @@ const api = {
   listEditors: (): Promise<EditorApp[]> => ipcRenderer.invoke('project:editors'),
   openInEditor: (cwd: string, editorName: string): Promise<void> =>
     ipcRenderer.invoke('project:open-in', cwd, editorName),
+  openFile: (cwd: string, filePath: string): Promise<void> =>
+    ipcRenderer.invoke('file:open', cwd, filePath),
+  revealFile: (cwd: string, filePath: string): Promise<void> =>
+    ipcRenderer.invoke('file:reveal', cwd, filePath),
+  openFileIn: (cwd: string, filePath: string, editorName: string): Promise<void> =>
+    ipcRenderer.invoke('file:open-in', cwd, filePath, editorName),
   onChatEvent: (callback: (event: ChatEvent) => void): (() => void) => {
     const listener = (_e: unknown, event: ChatEvent): void => callback(event)
     ipcRenderer.on('chat:event', listener)

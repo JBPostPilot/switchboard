@@ -3,6 +3,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { friendlyToolSummary } from './sessions'
+import { TaskTracker, isTaskTool } from './tasks'
 import type { ThreadItem } from '../shared/types'
 
 // Rebuild a chat's visible history from the engine's own session transcript
@@ -24,6 +25,10 @@ export function loadTranscriptItems(cwd: string, sessionId: string): ThreadItem[
   }
 
   const items: ThreadItem[] = []
+  // Task/todo tools are replayed into one checklist card rather than shown as a
+  // step apiece; it's slotted in where the tasks first appeared.
+  const tasks = new TaskTracker()
+  let taskInsertAt = -1
   for (const line of lines) {
     if (!line.trim()) continue
     let entry: Record<string, unknown>
@@ -58,6 +63,11 @@ export function loadTranscriptItems(cwd: string, sessionId: string): ThreadItem[
           items.push({ kind: 'claude', id: randomUUID(), text: b.text, ts })
         } else if (b.type === 'tool_use') {
           const tool = String(b.name ?? 'tool')
+          if (isTaskTool(tool)) {
+            if (taskInsertAt < 0) taskInsertAt = items.length
+            tasks.apply(tool, (b.input ?? {}) as Record<string, unknown>)
+            continue
+          }
           items.push({
             kind: 'step',
             id: randomUUID(),
@@ -69,5 +79,12 @@ export function loadTranscriptItems(cwd: string, sessionId: string): ThreadItem[
       }
     }
   }
+
+  if (tasks.size > 0) {
+    const card: ThreadItem = { kind: 'tasks', id: randomUUID(), items: tasks.list(), ts: Date.now() }
+    const at = taskInsertAt >= 0 && taskInsertAt <= items.length ? taskInsertAt : items.length
+    items.splice(at, 0, card)
+  }
+
   return items
 }
