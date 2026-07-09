@@ -128,6 +128,11 @@ export interface SlashCommandInfo {
   argumentHint: string
 }
 
+// Per-command usage tally, keyed by command name. Drives frequency/recency
+// ranking of the slash-command autocomplete. Single-user local app, so this is
+// a flat machine-wide map — no per-user or per-project partitioning.
+export type CommandUsage = Record<string, { count: number; lastUsed: number }>
+
 export interface ModelChoice {
   id: string
   label: string

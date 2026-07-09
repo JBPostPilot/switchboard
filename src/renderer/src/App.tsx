@@ -8,6 +8,7 @@ import type {
   BacklogEntry,
   ChatMeta,
   ChatQuestion,
+  CommandUsage,
   EditorApp,
   ModelChoice,
   PermissionModeChoice,
@@ -358,6 +359,9 @@ export default function App(): React.JSX.Element {
   const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [commands, setCommands] = useState<SlashCommandInfo[]>([])
+  // How often each slash command has been run, for autocomplete ranking.
+  // Loaded once on launch; bumped optimistically on send (see `send`).
+  const [cmdUsage, setCmdUsage] = useState<CommandUsage>({})
   const [backlog, setBacklog] = useState<BacklogEntry[]>([])
   const [backlogMode, setBacklogMode] = useState(false)
   // Latest compaction progress on a chat — a signal (not data) the usage meter
@@ -514,10 +518,29 @@ export default function App(): React.JSX.Element {
 
   const send = useCallback(
     (text: string, attachments: Attachment[]) => {
-      if (currentId) void sb.sendMessage(currentId, text, attachments)
+      if (!currentId) return
+      void sb.sendMessage(currentId, text, attachments)
+      // Count a command as "used" only when it's actually sent. Guard against
+      // free-text that merely starts with "/" by matching a known command.
+      if (text.startsWith('/')) {
+        const typed = text.slice(1).split(/\s/)[0].toLowerCase()
+        const match = commands.find((c) => c.name.toLowerCase() === typed)
+        if (match) {
+          void sb.recordCommandUsage(match.name)
+          setCmdUsage((u) => ({
+            ...u,
+            [match.name]: { count: (u[match.name]?.count ?? 0) + 1, lastUsed: Date.now() }
+          }))
+        }
+      }
     },
-    [currentId]
+    [currentId, commands]
   )
+
+  // Hydrate the slash-command usage tally once on launch.
+  useEffect(() => {
+    void sb.getCommandUsage().then(setCmdUsage)
+  }, [])
 
   const pendingAsk = useMemo(
     () => items.findLast((i) => i.kind === 'ask' && !i.resolved) as Extract<ThreadItem, { kind: 'ask' }> | undefined,
@@ -635,6 +658,7 @@ export default function App(): React.JSX.Element {
             items={items}
             models={models}
             commands={commands.length > 0 ? commands : FALLBACK_COMMANDS}
+            commandUsage={cmdUsage}
             onPatchChat={patchChat}
             draft={draft}
             setDraft={setDraft}
@@ -961,12 +985,14 @@ function ChatRow({
   selected,
   onSelect,
   onClose,
+  onNewChat,
   className
 }: {
   chat: ChatMeta
   selected: boolean
   onSelect: (id: string) => void
   onClose: (id: string) => void
+  onNewChat?: (cwd: string) => void
   className?: string
 }): React.JSX.Element {
   return (
@@ -988,6 +1014,19 @@ function ChatRow({
       </span>
       {chat.status === 'needs-you' && <span className="badge" />}
       {chat.status === 'working' && <span className="badge work" />}
+      {onNewChat && (
+        <button
+          className="chat-newhere"
+          data-tip="New chat in this project"
+          aria-label={`Start a new chat in ${chat.title}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onNewChat(chat.cwd)
+          }}
+        >
+          +
+        </button>
+      )}
       <button
         className="chat-close"
         title="Close this chat (⌘W)"
@@ -1013,7 +1052,8 @@ function ThreadStack({
   expanded,
   onToggle,
   onSelect,
-  onClose
+  onClose,
+  onNewChat
 }: {
   groupKey: string
   chats: ChatMeta[]
@@ -1023,6 +1063,7 @@ function ThreadStack({
   onToggle: () => void
   onSelect: (id: string) => void
   onClose: (id: string) => void
+  onNewChat: (cwd: string) => void
 }): React.JSX.Element {
   const head = chats[0]
   const projectName = groupKey.split('/').filter(Boolean).pop() ?? groupKey
@@ -1062,6 +1103,17 @@ function ThreadStack({
             {sectionCls === 'work' && <span className="badge work" />}
           </>
         )}
+        <button
+          className="chat-newhere"
+          data-tip="New chat in this project"
+          aria-label={`Start a new chat in ${projectName}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            onNewChat(head.cwd)
+          }}
+        >
+          +
+        </button>
       </div>
       <div className="stack-members" aria-hidden={!expanded}>
         <div className="stack-members-inner">
@@ -1115,6 +1167,11 @@ function Sidebar({
     const next = !grouped
     setGrouped(next)
     localStorage.setItem('sb.groupByProject', next ? '1' : '0')
+  }
+
+  const newInProject = async (cwd: string): Promise<void> => {
+    const meta = await sb.createChat({ cwd })
+    if (meta) onCreated(meta)
   }
 
   const toggleStack = (key: string): void => {
@@ -1180,6 +1237,7 @@ function Sidebar({
                     selected={row.chat.id === currentId}
                     onSelect={onSelect}
                     onClose={onClose}
+                    onNewChat={(cwd) => void newInProject(cwd)}
                   />
                 ) : (
                   <ThreadStack
@@ -1192,6 +1250,7 @@ function Sidebar({
                     onToggle={() => toggleStack(`${group.cls}:${row.key}`)}
                     onSelect={onSelect}
                     onClose={onClose}
+                    onNewChat={(cwd) => void newInProject(cwd)}
                   />
                 )
               )}
@@ -1217,6 +1276,7 @@ function ChatPane({
   items,
   models,
   commands,
+  commandUsage,
   onPatchChat,
   draft,
   setDraft,
@@ -1232,6 +1292,7 @@ function ChatPane({
   items: ThreadItem[]
   models: ModelChoice[]
   commands: SlashCommandInfo[]
+  commandUsage: CommandUsage
   onPatchChat: (id: string, patch: Partial<ChatMeta>) => void
   draft: string
   setDraft: (v: string) => void
@@ -1367,13 +1428,22 @@ function ChatPane({
           c.name.toLowerCase().includes(cmdFilter) ||
           c.description.toLowerCase().includes(cmdFilter)
       )
-      .sort(
-        (a, b) =>
-          Number(b.name.toLowerCase().startsWith(cmdFilter)) -
-          Number(a.name.toLowerCase().startsWith(cmdFilter))
-      )
+      .sort((a, b) => {
+        // Prefix matches first, so typing stays predictable. Then the "memory":
+        // most-used, then most-recently-used, then alphabetical. A bare "/" has
+        // an empty filter (all names tie on prefix), so top-used surface first.
+        const pa = Number(a.name.toLowerCase().startsWith(cmdFilter))
+        const pb = Number(b.name.toLowerCase().startsWith(cmdFilter))
+        if (pa !== pb) return pb - pa
+        const ua = commandUsage[a.name]
+        const ub = commandUsage[b.name]
+        if ((ub?.count ?? 0) !== (ua?.count ?? 0)) return (ub?.count ?? 0) - (ua?.count ?? 0)
+        if ((ub?.lastUsed ?? 0) !== (ua?.lastUsed ?? 0))
+          return (ub?.lastUsed ?? 0) - (ua?.lastUsed ?? 0)
+        return a.name.localeCompare(b.name)
+      })
       .slice(0, 10)
-  }, [cmdOpen, cmdFilter, commands])
+  }, [cmdOpen, cmdFilter, commands, commandUsage])
 
   useEffect(() => setCmdSel(0), [cmdFilter])
   useEffect(() => {
@@ -1532,6 +1602,11 @@ function ChatPane({
               >
                 <span className="cmd-name">/{c.name}</span>
                 {c.argumentHint && <span className="cmd-hint">{c.argumentHint}</span>}
+                {(commandUsage[c.name]?.count ?? 0) > 0 && (
+                  <span className="cmd-recent" title="You use this often">
+                    ★
+                  </span>
+                )}
                 <span className="cmd-desc">{c.description}</span>
               </button>
             ))}

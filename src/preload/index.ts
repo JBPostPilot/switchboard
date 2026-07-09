@@ -5,6 +5,7 @@ import type {
   BacklogEntry,
   ChatEvent,
   ChatMeta,
+  CommandUsage,
   EditorApp,
   ModelChoice,
   PermissionDecision,
@@ -18,7 +19,7 @@ import type {
 
 const api = {
   listChats: (): Promise<ChatMeta[]> => ipcRenderer.invoke('chats:list'),
-  createChat: (opts?: { newProjectName?: string }): Promise<ChatMeta | null> =>
+  createChat: (opts?: { newProjectName?: string; cwd?: string }): Promise<ChatMeta | null> =>
     ipcRenderer.invoke('chats:create', opts),
   getAuthStatus: (): Promise<AuthStatus> => ipcRenderer.invoke('auth:status'),
   getUserProfile: (): Promise<UserProfile> => ipcRenderer.invoke('auth:profile'),
@@ -58,6 +59,9 @@ const api = {
   getItems: (chatId: string): Promise<ThreadItem[]> => ipcRenderer.invoke('chats:items', chatId),
   getCommands: (chatId: string): Promise<SlashCommandInfo[]> =>
     ipcRenderer.invoke('chats:commands', chatId),
+  getCommandUsage: (): Promise<CommandUsage> => ipcRenderer.invoke('commands:usage'),
+  recordCommandUsage: (name: string): Promise<void> =>
+    ipcRenderer.invoke('commands:record', name),
   getBacklog: (): Promise<BacklogEntry[]> => ipcRenderer.invoke('backlog:list'),
   searchChats: (query: string): Promise<SearchHit[]> => ipcRenderer.invoke('chats:search', query),
   getProjectInfo: (cwd: string): Promise<ProjectInfo> => ipcRenderer.invoke('project:info', cwd),

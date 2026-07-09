@@ -6,6 +6,7 @@ import { authStatus, getUserProfile, openLoginTerminal, setStoredApiKey } from '
 import { ChatSession } from './sessions'
 import { listEditors, openInEditor } from './editors'
 import { getModels, loadCachedModels, refreshModels } from './models'
+import { getCommandUsage, loadCommandUsage, recordCommandUsage } from './commandUsage'
 import { getProjectInfo, getRepoIdentity } from './projectInfo'
 import { loadTranscriptItems } from './transcript'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
@@ -215,6 +216,7 @@ app.whenReady().then(() => {
   buildMenu()
   loadCachedModels()
   void refreshModels() // background refresh; dropdown re-hydrates when it lands
+  loadCommandUsage()
 
   // Backfill repo identity for chats created before it existed.
   for (const meta of chats.filter((c) => c.repoRoot === undefined && !c.isWorktree)) {
@@ -253,9 +255,14 @@ app.whenReady().then(() => {
     return projectsRoot()
   })
 
-  ipcMain.handle('chats:create', async (_e, opts?: { newProjectName?: string }) => {
+  ipcMain.handle('chats:create', async (_e, opts?: { newProjectName?: string; cwd?: string }) => {
     let cwd: string
-    if (opts?.newProjectName) {
+    if (opts?.cwd) {
+      // Start a chat directly in a folder we already know (e.g. an existing
+      // project in the sidebar) — no picker needed.
+      if (!fs.existsSync(opts.cwd)) return null
+      cwd = opts.cwd
+    } else if (opts?.newProjectName) {
       const safe = opts.newProjectName.trim().replace(/[/:\\]/g, '-')
       if (!safe) return null
       cwd = path.join(projectsRoot(), safe)
@@ -346,6 +353,10 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('chats:commands', (_e, chatId: string) => sessions.get(chatId)?.commands ?? [])
+
+  ipcMain.handle('commands:usage', () => getCommandUsage())
+
+  ipcMain.handle('commands:record', (_e, name: string) => recordCommandUsage(name))
 
   // Full-text search across every chat's conversation history — newest
   // matching message per chat, with a snippet around the match.
