@@ -9,6 +9,7 @@ import type {
   ChatMeta,
   ChatQuestion,
   CommandUsage,
+  DiscoveredSession,
   EditorApp,
   ModelChoice,
   PermissionModeChoice,
@@ -356,6 +357,9 @@ export default function App(): React.JSX.Element {
   const [info, setInfo] = useState<ProjectInfo | null>(null)
   const [models, setModels] = useState<ModelChoice[]>(FALLBACK_MODELS)
   const [paletteOpen, setPaletteOpen] = useState(false)
+  // null = the Import-from-Terminal picker is closed; an array = open with the
+  // sessions discovered when the menu item was chosen.
+  const [importSessions, setImportSessions] = useState<DiscoveredSession[] | null>(null)
   const [auth, setAuth] = useState<AuthStatus | null>(null)
   const [profile, setProfile] = useState<UserProfile | null>(null)
   const [commands, setCommands] = useState<SlashCommandInfo[]>([])
@@ -512,6 +516,9 @@ export default function App(): React.JSX.Element {
         void sb.createChat().then((meta) => {
           if (meta) chatCreated(meta)
         })
+      }
+      if (action === 'import-terminal') {
+        void sb.discoverTerminalSessions().then(setImportSessions)
       }
     })
   }, [closeChat, chatCreated])
@@ -687,6 +694,16 @@ export default function App(): React.JSX.Element {
             setPaletteOpen(false)
           }}
           onClose={() => setPaletteOpen(false)}
+        />
+      )}
+      {importSessions && (
+        <ImportTerminalModal
+          sessions={importSessions}
+          onClose={() => setImportSessions(null)}
+          onImported={(metas) => {
+            metas.forEach(chatCreated)
+            setImportSessions(null)
+          }}
         />
       )}
       <ProfileBadge profile={profile} />
@@ -881,6 +898,98 @@ function Palette({
               </button>
             )
           })}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Picker for Claude sessions running in a Terminal (File → Import from
+// Terminal…). The user ticks which live sessions to pull in as chats; importing
+// brings the conversation in and continues it — the Terminal window keeps its
+// own process running independently.
+function ImportTerminalModal({
+  sessions,
+  onClose,
+  onImported
+}: {
+  sessions: DiscoveredSession[]
+  onClose: () => void
+  onImported: (metas: ChatMeta[]) => void
+}): React.JSX.Element {
+  const [checked, setChecked] = useState<Set<string>>(() => new Set())
+  const [importing, setImporting] = useState(false)
+
+  const toggle = (id: string): void =>
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+
+  const doImport = (): void => {
+    if (checked.size === 0 || importing) return
+    setImporting(true)
+    void sb.importTerminalSessions([...checked]).then(onImported)
+  }
+
+  return (
+    <div
+      className="palette-backdrop"
+      onMouseDown={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="import-modal" role="dialog" aria-label="Import from Terminal">
+        <div className="import-head">
+          <h2>Import from Terminal</h2>
+          <p>
+            Claude sessions running in your Terminal windows. Pick the ones to continue here —
+            each keeps its full history.
+          </p>
+        </div>
+        {sessions.length === 0 ? (
+          <div className="import-empty">No active Claude sessions found in your Terminal.</div>
+        ) : (
+          <div className="import-list">
+            {sessions.map((s) => (
+              <button
+                key={s.sessionId}
+                className={`import-row ${checked.has(s.sessionId) ? 'checked' : ''}`}
+                onClick={() => toggle(s.sessionId)}
+              >
+                <span className="import-check" aria-hidden>
+                  {checked.has(s.sessionId) ? '✓' : ''}
+                </span>
+                <span className="import-body">
+                  <span className="import-title">{s.title}</span>
+                  <span className="import-meta">
+                    <span className="import-project">{s.projectName}</span>
+                    <span className="import-path">{shortPath(s.cwd)}</span>
+                    {s.lastActivity > 0 && (
+                      <span className="import-ago">{timeAgo(s.lastActivity)}</span>
+                    )}
+                  </span>
+                  {s.preview && <span className="import-preview">{s.preview}</span>}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="import-actions">
+          <button className="import-cancel" onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            className="import-confirm"
+            disabled={checked.size === 0 || importing}
+            onClick={doImport}
+          >
+            {importing
+              ? 'Importing…'
+              : checked.size > 0
+                ? `Import ${checked.size} chat${checked.size > 1 ? 's' : ''}`
+                : 'Import'}
+          </button>
         </div>
       </div>
     </div>

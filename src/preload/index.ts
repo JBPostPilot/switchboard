@@ -6,6 +6,7 @@ import type {
   ChatEvent,
   ChatMeta,
   CommandUsage,
+  DiscoveredSession,
   EditorApp,
   ModelChoice,
   PermissionDecision,
@@ -29,6 +30,10 @@ const api = {
   chooseProjectsRoot: (): Promise<string> => ipcRenderer.invoke('projects:choose-root'),
   deleteChat: (chatId: string): Promise<ChatMeta[] | null> =>
     ipcRenderer.invoke('chats:delete', chatId),
+  discoverTerminalSessions: (): Promise<DiscoveredSession[]> =>
+    ipcRenderer.invoke('terminal:discover'),
+  importTerminalSessions: (sessionIds: string[]): Promise<ChatMeta[]> =>
+    ipcRenderer.invoke('terminal:import', sessionIds),
   onOpenChat: (callback: (chatId: string) => void): (() => void) => {
     const listener = (_e: unknown, chatId: string): void => callback(chatId)
     ipcRenderer.on('notification:open', listener)

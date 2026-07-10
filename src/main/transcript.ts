@@ -11,7 +11,7 @@ import type { ThreadItem } from '../shared/types'
 // has no local history for a chat — e.g. resuming a session recorded before
 // this feature, or adopting a session started from the terminal.
 
-function encodeCwd(cwd: string): string {
+export function encodeCwd(cwd: string): string {
   return cwd.replace(/[^a-zA-Z0-9]/g, '-')
 }
 

@@ -9,6 +9,7 @@ import { getModels, loadCachedModels, refreshModels } from './models'
 import { getCommandUsage, loadCommandUsage, recordCommandUsage } from './commandUsage'
 import { getProjectInfo, getRepoIdentity } from './projectInfo'
 import { loadTranscriptItems } from './transcript'
+import { discoverExternalSessions } from './terminalSessions'
 import { loadChats, saveChats, loadItems, saveItems, deleteItems } from './store'
 import type { Attachment, ChatEvent, ChatMeta, PermissionDecision, PermissionModeChoice } from '../shared/types'
 
@@ -196,6 +197,11 @@ function buildMenu(): void {
           click: () => win?.webContents.send('menu:action', 'new-chat')
         },
         {
+          label: 'Import from Terminal…',
+          accelerator: 'CmdOrCtrl+Shift+I',
+          click: () => win?.webContents.send('menu:action', 'import-terminal')
+        },
+        {
           label: 'Close Chat',
           accelerator: 'CmdOrCtrl+W',
           click: () => win?.webContents.send('menu:action', 'close-chat')
@@ -284,6 +290,34 @@ app.whenReady().then(() => {
     chats.unshift(meta)
     persistAll()
     return meta
+  })
+
+  // Live Claude sessions running in a Terminal (or an editor terminal) that
+  // aren't already imported. The renderer shows these in a picker.
+  ipcMain.handle('terminal:discover', () => discoverExternalSessions(chats))
+
+  // Adopt the chosen external sessions as chats. Each new chat points at the
+  // engine sessionId; its history rebuilds from the transcript (itemsFor) and
+  // resumes on the first message the user sends.
+  ipcMain.handle('terminal:import', async (_e, sessionIds: string[]) => {
+    const discovered = discoverExternalSessions(chats)
+    const created: ChatMeta[] = []
+    for (const id of sessionIds) {
+      const found = discovered.find((s) => s.sessionId === id)
+      if (!found) continue // gone/stale, or already imported since discovery
+      const meta = createChatMeta(found.cwd)
+      meta.sessionId = found.sessionId
+      meta.title = found.title
+      meta.preview = found.preview
+      meta.statusLine = 'Continued from Terminal'
+      const identity = await getRepoIdentity(found.cwd)
+      meta.repoRoot = identity.repoRoot
+      meta.isWorktree = identity.isWorktree
+      chats.unshift(meta)
+      created.push(meta)
+    }
+    if (created.length > 0) persistAll()
+    return created
   })
 
   ipcMain.handle('chats:send', (_e, chatId: string, text: string, attachments?: Attachment[]) => {

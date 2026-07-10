@@ -32,6 +32,23 @@ export interface ChatMeta {
   updatedAt: number
 }
 
+// A live Claude Code session running outside Switchboard (started from a
+// Terminal window or an editor's integrated terminal), offered up for import.
+// Derived from the engine's ~/.claude/sessions/<pid>.json registry, enriched
+// from the session transcript.
+export interface DiscoveredSession {
+  sessionId: string
+  cwd: string
+  // A friendly label (session slug, else first prompt, else folder name).
+  title: string
+  // First-prompt snippet shown under the title in the picker.
+  preview: string
+  // Transcript mtime — when the session was last active. Sorted newest-first.
+  lastActivity: number
+  // Folder name of cwd, for the picker's project column.
+  projectName: string
+}
+
 export interface McpServer {
   name: string
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
